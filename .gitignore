@@ -1,0 +1,29 @@
+# Local Engram memory (keep project identity only)
+.engram/*
+!.engram/config.json
+
+# Secret environment files
+.env
+.env.*
+!.env.example
+
+# Caches and generated dependencies
+.cache/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+
+# Editor, OS, and local workspace state
+.DS_Store
+*.swp
+*.swo
+
+# Backups and temporary files
+*.bak
+*.backup
+*.tmp
+*~
+# Local AI runtime state
+.atl/
