@@ -1,0 +1,250 @@
+name: Draft development prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_sha:
+        description: Full reviewed commit SHA on the protected main branch
+        required: true
+        type: string
+      release_tag:
+        description: Development prerelease tag
+        required: true
+        type: string
+      rollback_target:
+        description: Retained known-good development prerelease tag
+        required: true
+        type: string
+      execute_publication:
+        description: Create and promote the validated draft
+        required: true
+        default: false
+        type: boolean
+
+permissions: {}
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      nnue_filename: ${{ steps.nnue.outputs.filename }}
+      nnue_sha256: ${{ steps.nnue.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.reviewed_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: source
+        env:
+          REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+        run: |
+          case "$REVIEWED_SHA" in (*[!0-9a-f]*|'') exit 1;; esac
+          test "${#REVIEWED_SHA}" -eq 40
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$REVIEWED_SHA" origin/main
+          printf 'sha=%s\n' "$REVIEWED_SHA" >>"$GITHUB_OUTPUT"
+      - id: nnue
+        run: |
+          python3 - <<'PY' >>"$GITHUB_OUTPUT"
+          import json
+          value = json.load(open("manifests/nnue.json", encoding="utf-8"))
+          print(f"filename={value['filename']}")
+          print(f"sha256={value['sha256']}")
+          PY
+
+  linux-x64:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      REVIEWED_SHA: ${{ needs.resolve.outputs.source_sha }}
+      EXPECTED_NNUE_FILENAME: ${{ needs.resolve.outputs.nnue_filename }}
+      EXPECTED_NNUE_SHA256: ${{ needs.resolve.outputs.nnue_sha256 }}
+      SF_COR_BUILD_ARCH: x86-64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          persist-credentials: false
+      - run: |
+          scripts/nnue-prefetch.sh manifests/nnue.json
+          test "$(scripts/nnue-prefetch.sh --verify-only manifests/nnue.json)" = "$EXPECTED_NNUE_FILENAME $EXPECTED_NNUE_SHA256"
+          scripts/build.sh manifests/nnue.json
+          tar -czf stockfish-linux-x64-x86-64-universal.tar.gz -C build stockfish
+      - run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          name = "stockfish-linux-x64-x86-64-universal.tar.gz"
+          value = {"schema": 1, "platform": "linux-x64", "artifact": name,
+                   "artifact_sha256": hashlib.sha256(open(name, "rb").read()).hexdigest(),
+                   "source_sha": os.environ["REVIEWED_SHA"],
+                   "nnue_filename": os.environ["EXPECTED_NNUE_FILENAME"],
+                   "nnue_sha256": os.environ["EXPECTED_NNUE_SHA256"],
+                   "gpl_source_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/tree/{os.environ['REVIEWED_SHA']}"}
+          open("linux-x64.json", "w", encoding="utf-8").write(json.dumps(value, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-x64-x86-64-universal
+          path: |
+            stockfish-linux-x64-x86-64-universal.tar.gz
+            linux-x64.json
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-x64:
+    needs: resolve
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    env:
+      REVIEWED_SHA: ${{ needs.resolve.outputs.source_sha }}
+      EXPECTED_NNUE_FILENAME: ${{ needs.resolve.outputs.nnue_filename }}
+      EXPECTED_NNUE_SHA256: ${{ needs.resolve.outputs.nnue_sha256 }}
+      SF_COR_BUILD_ARCH: x86-64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          persist-credentials: false
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        with:
+          msystem: UCRT64
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc make python curl
+      - shell: msys2 {0}
+        run: |
+          scripts/nnue-prefetch.sh manifests/nnue.json
+          test "$(scripts/nnue-prefetch.sh --verify-only manifests/nnue.json)" = "$EXPECTED_NNUE_FILENAME $EXPECTED_NNUE_SHA256"
+          scripts/build.sh manifests/nnue.json
+          python3 - <<'PY'
+          import hashlib, json, os, zipfile
+          name = "stockfish-windows-x64-x86-64-universal.zip"
+          with zipfile.ZipFile(name, "w", zipfile.ZIP_DEFLATED) as archive:
+              archive.write("build/stockfish", "stockfish.exe")
+          value = {"schema": 1, "platform": "windows-x64", "artifact": name,
+                   "artifact_sha256": hashlib.sha256(open(name, "rb").read()).hexdigest(),
+                   "source_sha": os.environ["REVIEWED_SHA"],
+                   "nnue_filename": os.environ["EXPECTED_NNUE_FILENAME"],
+                   "nnue_sha256": os.environ["EXPECTED_NNUE_SHA256"],
+                   "gpl_source_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/tree/{os.environ['REVIEWED_SHA']}"}
+          open("windows-x64.json", "w", encoding="utf-8").write(json.dumps(value, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-x64-x86-64-universal
+          path: |
+            stockfish-windows-x64-x86-64-universal.zip
+            windows-x64.json
+          if-no-files-found: error
+          retention-days: 7
+
+  join-evidence:
+    needs: [resolve, linux-x64, windows-x64]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      REVIEWED_SHA: ${{ needs.resolve.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: '*-x86-64-universal'
+          path: joined
+          merge-multiple: true
+      - run: |
+          mkdir -p joined/metadata joined/artifacts release-output
+          mv joined/linux-x64.json joined/windows-x64.json joined/metadata/
+          mv joined/stockfish-* joined/artifacts/
+          scripts/release-evidence.sh join joined/metadata joined/artifacts release-output
+          test "$(python3 -c 'import json; print(json.load(open("release-output/release-evidence.json"))["source_sha"])')" = "$REVIEWED_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: validated-release-bundle
+          path: |
+            joined/artifacts/
+            release-output/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [resolve, join-evidence]
+    if: inputs.execute_publication
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      REVIEWED_SHA: ${{ needs.resolve.outputs.source_sha }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      ROLLBACK_TARGET: ${{ inputs.rollback_target }}
+      EXECUTE_PUBLICATION: ${{ inputs.execute_publication }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validated-release-bundle
+      - run: |
+          case "$RELEASE_TAG" in (dev-[A-Za-z0-9._-]*) ;; (*) exit 1;; esac
+          case "$ROLLBACK_TARGET" in (dev-[A-Za-z0-9._-]*) ;; (*) exit 1;; esac
+          test "$EXECUTE_PUBLICATION" = true
+          gh release list --limit 100 --json tagName,publishedAt,isDraft,isPrerelease >release-state.raw.json
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, tempfile
+          raw = json.load(open("release-state.raw.json", encoding="utf-8"))
+          state = []
+          for item in raw:
+              tag = item["tagName"]
+              if not tag.startswith("dev-"):
+                  continue
+              valid, provenance = False, {}
+              with tempfile.TemporaryDirectory() as directory:
+                  result = subprocess.run(
+                      ["gh", "release", "download", tag, "--pattern", "release-evidence.json", "--dir", directory],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                  )
+                  path = pathlib.Path(directory) / "release-evidence.json"
+                  if result.returncode == 0 and path.is_file():
+                      try:
+                          evidence = json.load(path.open(encoding="utf-8"))
+                          provenance = {
+                              "source_sha": evidence["source_sha"],
+                              "nnue_filename": evidence["nnue"]["filename"],
+                              "nnue_sha256": evidence["nnue"]["sha256"],
+                              "gpl_source_url": evidence["gpl_source_url"],
+                              "checksums": {value["name"]: value["sha256"] for value in evidence["artifacts"]},
+                          }
+                          valid = True
+                      except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                          pass
+              state.append({"tag": tag, "created_at": item["publishedAt"] or "", "development": True,
+                            "draft": item["isDraft"], "prerelease": item["isPrerelease"], "valid": valid,
+                            "known_good": tag == os.environ["ROLLBACK_TARGET"], "provenance": provenance})
+          open("release-state.json", "w", encoding="utf-8").write(json.dumps(state, indent=2) + "\n")
+          PY
+          scripts/release-evidence.sh plan-publish release-output/release-evidence.json release-state.json "$RELEASE_TAG" "$ROLLBACK_TARGET" >release-plan.json
+          env gga
+          gh release create "$RELEASE_TAG" joined/artifacts/* release-output/* --draft --prerelease --target "$REVIEWED_SHA" --notes-file release-output/release-notes.md
+          gh release view "$RELEASE_TAG" --json isDraft,targetCommitish >draft-state.json
+          python3 -c 'import json; v=json.load(open("draft-state.json")); assert v["isDraft"] and v["targetCommitish"] == __import__("os").environ["REVIEWED_SHA"]'
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          python3 - <<'PY'
+          import json, subprocess
+          plan = json.load(open("release-plan.json", encoding="utf-8"))
+          for step in plan["steps"]:
+              if step["action"] == "delete_release":
+                  subprocess.run(["gh", "release", "delete", step["tag"], "--yes"], check=True)
+          PY
