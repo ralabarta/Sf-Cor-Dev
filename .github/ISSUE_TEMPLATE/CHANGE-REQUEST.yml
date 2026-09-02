@@ -1,0 +1,62 @@
+name: Change request
+description: Propose a feature or operational change with clear delivery criteria.
+title: "[Change]: "
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the requested outcome and the evidence needed to review it.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: State the outcome this change should achieve.
+      placeholder: What should be true when this change is complete?
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Rationale
+      description: Explain why this change is needed and who benefits.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List specific, testable conditions for completion.
+      placeholder: |
+        - [ ] Criterion one
+        - [ ] Criterion two
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks
+      description: Identify delivery, operational, security, or compatibility risks.
+    validations:
+      required: true
+
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback
+      description: Define how to contain or reverse the change if it fails.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: data-safety
+    attributes:
+      label: Data safety
+      options:
+        - label: I confirm this request contains no secrets or private data.
+          required: true
