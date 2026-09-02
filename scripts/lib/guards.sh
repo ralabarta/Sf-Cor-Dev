@@ -42,6 +42,37 @@ require_sha256() {
   [ "${#1}" -eq 64 ] || fail "invalid full SHA-256: $1"
 }
 
+require_safe_directory() {
+  candidate=$1
+  mode=$2
+  require_command python3
+  python3 - "$candidate" "$mode" <<'PY' || fail "unsafe directory path: $candidate"
+import os
+import stat
+import sys
+
+path, mode = sys.argv[1:]
+if mode not in {"create", "existing"} or not os.path.isabs(path):
+    raise SystemExit(1)
+path = os.path.normpath(path)
+if path == os.sep:
+    raise SystemExit(1)
+current = os.sep
+for component in path.split(os.sep)[1:]:
+    current = os.path.join(current, component)
+    try:
+        info = os.lstat(current)
+    except FileNotFoundError:
+        if mode != "create":
+            raise SystemExit(1)
+        os.mkdir(current, 0o700)
+        info = os.lstat(current)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise SystemExit(1)
+print(path)
+PY
+}
+
 require_commit_sha() {
   case $1 in
     *[!0-9a-f]*|'') fail "invalid full commit identity: $1" ;;
