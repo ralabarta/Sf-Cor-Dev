@@ -50,6 +50,7 @@ assert checkout["uses"] == "actions/checkout@11d5960a326750d5838078e36cf38b85af6
 assert checkout["with"] == {
     "repository": "${{ github.event.pull_request.head.repo.full_name || github.repository }}",
     "ref": "${{ github.event.pull_request.head.sha || github.sha }}",
+    "fetch-depth": "0",
     "persist-credentials": "false",
 }
 upload = steps[-1]
