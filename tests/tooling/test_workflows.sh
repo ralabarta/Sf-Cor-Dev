@@ -79,6 +79,8 @@ for required in (
 for required in (
     "gentleman-guardian-angel/archive/refs/tags/v2.10.1.tar.gz",
     'sha256sum --check --strict',
+    'IFS= read -r version',
+    'test "$version" = "gga v$GGA_VERSION"',
 ):
     assert required in gga_install
 assert "c1dbcee120b83238e1c7ecce4a60f88a66810796ad95a239debc09e8509d0fba" in workflow_text
