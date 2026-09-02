@@ -17,6 +17,12 @@ require_command sha256sum
 require_command mktemp
 require_command rg
 
+build_profile=${SF_COR_BUILD_PROFILE:-portable}
+case $build_profile in
+  portable|local) ;;
+  *) fail 'invalid validation build profile' ;;
+esac
+
 git -C "$root" diff --quiet -- . ':(exclude)build/**' ':(exclude)evidence/**' ||
   fail 'repository source provenance is not clean'
 git -C "$root" diff --cached --quiet -- . ':(exclude)build/**' ':(exclude)evidence/**' ||
@@ -183,7 +189,13 @@ run_default() {
   case $gate in
     provenance) printf 'source %s\n' "$source_sha" ;;
     nnue) "$script_dir/nnue-prefetch.sh" --verify-only ;;
-    build) "$script_dir/build.sh" ;;
+    build)
+      if [ "$build_profile" = local ]; then
+        "$script_dir/build.sh" --profile local
+      else
+        "$script_dir/build.sh"
+      fi
+      ;;
     uci) printf 'uci\nquit\n' | "$engine" ;;
     bench) "$engine" bench ;;
     perft) printf 'position startpos\ngo perft 2\nquit\n' | "$engine" ;;

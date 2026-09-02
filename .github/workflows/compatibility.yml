@@ -2,6 +2,8 @@ name: Compatibility evidence (non-authoritative)
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 # Automatic evidence never grants authority; human review remains mandatory.
 permissions: {}
@@ -12,21 +14,19 @@ jobs:
     permissions:
       contents: read
     env:
-      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-      PR_NUMBER: ${{ github.event.number }}
-      RUN_ID: pr-${{ github.event.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      RUN_ID: ${{ github.event_name }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: Check out the exact pull request source
+      - name: Check out the exact source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Verify source binding
         run: |
           case "$SOURCE_SHA" in (*[!0-9a-f]*|'') exit 1;; esac
           test "${#SOURCE_SHA}" -eq 40
-          case "$PR_NUMBER" in (*[!0-9]*|'') exit 1;; esac
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - name: Run fail-closed compatibility gates
         run: |
@@ -54,7 +54,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: compatibility-evidence-${{ github.event.number }}-${{ github.event.pull_request.head.sha }}
+          name: compatibility-evidence-${{ env.SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/${{ env.SOURCE_SHA }}/${{ env.RUN_ID }}
           if-no-files-found: error
           retention-days: 14

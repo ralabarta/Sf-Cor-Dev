@@ -31,17 +31,17 @@ export GH_INVOCATION_LOG PATH
 make_fixture() {
   root=$1
   mkdir -p "$root/metadata" "$root/artifacts" "$root/output"
-  printf '%s\n' linux-binary >"$root/artifacts/stockfish-linux-x64-x86-64-universal.tar.gz"
-  printf '%s\n' windows-binary >"$root/artifacts/stockfish-windows-x64-x86-64-universal.zip"
+  printf '%s\n' linux-binary >"$root/artifacts/stockfish-linux-x86-64.tar.gz"
+  printf '%s\n' windows-binary >"$root/artifacts/stockfish-windows-x86-64.zip"
   python3 - "$root" <<'PY'
 import hashlib, json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
-source = "0123456789abcdef" * 4
+source = "0123456789abcdef0123456789abcdef01234567"
 network = "nn-1a298aa575a0.nnue"
 network_digest = "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
 for platform, artifact in (
-    ("linux-x64", "stockfish-linux-x64-x86-64-universal.tar.gz"),
-    ("windows-x64", "stockfish-windows-x64-x86-64-universal.zip"),
+    ("linux-x64", "stockfish-linux-x86-64.tar.gz"),
+    ("windows-x64", "stockfish-windows-x86-64.zip"),
 ):
     path = root / "artifacts" / artifact
     value = {
@@ -85,7 +85,7 @@ python3 - "$tmp_dir/pass/output" <<'PY'
 import hashlib, json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 evidence = json.load((root / "release-evidence.json").open(encoding="utf-8"))
-assert evidence["source_sha"] == "0123456789abcdef" * 4
+assert evidence["source_sha"] == "0123456789abcdef0123456789abcdef01234567"
 assert evidence["nnue"] == {
     "filename": "nn-1a298aa575a0.nnue",
     "sha256": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2",
@@ -110,7 +110,7 @@ for case_name in source artifact nnue-name nnue-digest missing-checksum missing-
   root="$tmp_dir/fail-$case_name"
   make_fixture "$root"
   case $case_name in
-    source) mutate_json "$root/metadata/windows-x64.json" 'value["source_sha"] = "f" * 64' ;;
+    source) mutate_json "$root/metadata/windows-x64.json" 'value["source_sha"] = "f" * 40' ;;
     artifact) mutate_json "$root/metadata/windows-x64.json" 'value["artifact"] = "wrong.zip"' ;;
     nnue-name) mutate_json "$root/metadata/windows-x64.json" 'value["nnue_filename"] = "nn-wrong.nnue"' ;;
     nnue-digest) mutate_json "$root/metadata/windows-x64.json" 'value["nnue_sha256"] = "f" * 64' ;;
@@ -121,11 +121,11 @@ for case_name in source artifact nnue-name nnue-digest missing-checksum missing-
 done
 
 make_fixture "$tmp_dir/missing-artifact"
-rm "$tmp_dir/missing-artifact/artifacts/stockfish-windows-x64-x86-64-universal.zip"
+rm "$tmp_dir/missing-artifact/artifacts/stockfish-windows-x86-64.zip"
 expect_fail run_join "$tmp_dir/missing-artifact"
 
 make_fixture "$tmp_dir/tamper"
-printf '%s\n' tampered >>"$tmp_dir/tamper/artifacts/stockfish-linux-x64-x86-64-universal.tar.gz"
+printf '%s\n' tampered >>"$tmp_dir/tamper/artifacts/stockfish-linux-x86-64.tar.gz"
 expect_fail run_join "$tmp_dir/tamper"
 
 make_fixture "$tmp_dir/malformed"
@@ -150,7 +150,7 @@ for number in range(1, 7):
         "valid": True,
         "known_good": number == 1,
         "provenance": {
-            "source_sha": f"{number}" * 64,
+            "source_sha": f"{number}" * 40,
             "nnue_filename": "nn-test.nnue",
             "nnue_sha256": "a" * 64,
             "gpl_source_url": f"https://example.invalid/source/{number}",
@@ -186,7 +186,7 @@ python3 - "$tmp_dir/rollback-plan.json" <<'PY'
 import json, sys
 plan = json.load(open(sys.argv[1], encoding="utf-8"))
 assert plan["target_tag"] == "dev-20260901"
-assert plan["provenance"]["source_sha"] == "1" * 64
+assert plan["provenance"]["source_sha"] == "1" * 40
 assert [step["action"] for step in plan["steps"]] == ["download_retained", "verify_checksums", "activate_rollback"]
 PY
 expect_fail "$script" plan-rollback "$state" dev-20260902
@@ -206,9 +206,13 @@ for pin in (
 ):
     assert pin in text
 assert "ARCH=x86-64" in text or "SF_COR_BUILD_ARCH: x86-64" in text
-assert "x86-64-universal" in text
+assert "x86-64-universal" not in text
+assert "stockfish-linux-x86-64.tar.gz" in text
+assert "stockfish-windows-x86-64.zip" in text
+assert "--sort=name" in text and "gzip -n" in text
+assert "ZipInfo" in text and "1980, 1, 1, 0, 0, 0" in text
 assert "src/stockfish.exe" in text
-assert 'archive.write("build/stockfish.exe", "stockfish.exe")' in text
+assert 'archive.writestr(info, pathlib.Path("build/stockfish.exe").read_bytes())' in text
 assert "permissions: {}" in text
 assert "contents: write" in text and "contents: read" in text
 assert "--draft" in text and "--prerelease" in text
@@ -216,8 +220,22 @@ assert text.index("--draft") < text.index("--draft=false")
 assert "execute_publication" in text
 assert "scripts/release-evidence.sh join" in text
 assert "scripts/release-evidence.sh plan-publish" in text
-assert "env gga" in text
-assert text.index("env gga") < text.index("gh release create")
+assert "env gga run --ci" in text
+assert "models: read" in text
+assert "gentleman-guardian-angel/archive/refs/tags/v2.10.1.tar.gz" in text
+assert "c1dbcee120b83238e1c7ecce4a60f88a66810796ad95a239debc09e8509d0fba" in text
+review = text.index("env gga run --ci")
+create = text.index('gh release create "$RELEASE_TAG"')
+download = text.index('gh release download "$RELEASE_TAG"')
+promote = text.index('gh release edit "$RELEASE_TAG" --draft=false --prerelease')
+prune = text.index('"gh", "release", "delete"')
+assert review < create < download < promote < prune
+assert "hashlib.sha256" in text
+assert 'evidence["source_sha"] == os.environ["REVIEWED_SHA"]' in text
+assert 'evidence["nnue"]["filename"] == os.environ["EXPECTED_NNUE_FILENAME"]' in text
+assert 'evidence["nnue"]["sha256"] == os.environ["EXPECTED_NNUE_SHA256"]' in text
+assert 'set(path.name for path in root.iterdir()) == expected_assets' in text
+assert '(root / name).read_bytes() == (pathlib.Path("release-output") / name).read_bytes()' in text
 for block in re.findall(r"run: \|\n((?:\s{8,}.*\n)+)", text):
     assert "${{" not in block
 PY

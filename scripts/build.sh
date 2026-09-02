@@ -6,8 +6,18 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "$script_dir/lib/guards.sh"
 
 root=$(resolve_repository_root "$script_dir")
+profile=portable
+if [ "${1:-}" = --profile ]; then
+  [ "$#" -ge 2 ] || fail 'usage: build.sh [--profile portable|local] [manifest]'
+  profile=$2
+  shift 2
+fi
+[ "$#" -le 1 ] || fail 'usage: build.sh [--profile portable|local] [manifest]'
+case $profile in
+  portable|local) ;;
+  *) fail 'invalid build profile' ;;
+esac
 manifest=$(require_owned_manifest "$root" "${1:-manifests/nnue.json}" nnue.json)
-[ "$#" -le 1 ] || fail 'usage: build.sh [manifest]'
 require_command sha256sum
 require_command mktemp
 require_command make
@@ -15,6 +25,7 @@ require_command make
 manifest_values=$("$script_dir/nnue-prefetch.sh" --verify-only "$manifest") ||
   fail 'declared NNUE cache object is unavailable'
 set -f
+# shellcheck disable=SC2086 # Intentional splitting of two validated manifest fields.
 set -- $manifest_values
 set +f
 [ "$#" -eq 2 ] || fail 'invalid verified NNUE result'
@@ -46,7 +57,18 @@ PY
 actual=$(sha256sum "$cache_object" | cut -d ' ' -f 1)
 [ "$actual" = "$digest" ] || fail 'cached NNUE object failed checksum verification'
 
-arch=${SF_COR_BUILD_ARCH:-x86-64}
+if [ "$profile" = local ]; then
+  require_command getconf
+  arch=native
+  make_target='profile-build'
+  jobs=$(getconf _NPROCESSORS_ONLN) || fail 'cannot detect local build parallelism'
+  case $jobs in *[!0-9]*|'') fail 'invalid detected local build parallelism' ;; esac
+  [ "$jobs" -gt 0 ] || fail 'invalid detected local build parallelism'
+else
+  arch=${SF_COR_BUILD_ARCH:-x86-64}
+  make_target=all
+  jobs=
+fi
 case $arch in
   *[!A-Za-z0-9._-]*|'') fail 'invalid build architecture' ;;
 esac
@@ -101,11 +123,20 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 cp -R "$root/src" "$stage/src"
+if [ "$profile" = local ]; then
+  mkdir "$stage/scripts"
+  cp "$root/scripts/get_native_properties.sh" "$stage/scripts/get_native_properties.sh"
+  cp "$root/scripts/net.sh" "$stage/scripts/net.sh"
+fi
 cp "$cache_object" "$stage/src/$filename"
 actual=$(sha256sum "$stage/src/$filename" | cut -d ' ' -f 1)
 [ "$actual" = "$digest" ] || fail 'staged NNUE object failed checksum verification'
 
-make -C "$stage/src" "ARCH=$arch" all
+if [ -n "$jobs" ]; then
+  make -C "$stage/src" "ARCH=$arch" "-j$jobs" "$make_target"
+else
+  make -C "$stage/src" "ARCH=$arch" "$make_target"
+fi
 binary="$stage/src/stockfish"
 [ -f "$binary" ] && [ ! -L "$binary" ] && [ -x "$binary" ] ||
   fail 'upstream build did not produce an executable regular file'

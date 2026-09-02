@@ -31,6 +31,8 @@ new_workspace() {
   git -C "$worktree" init -q -b main
   cp "$workspace_root/scripts/nnue-prefetch.sh" "$worktree/scripts/nnue-prefetch.sh"
   cp "$workspace_root/scripts/build.sh" "$worktree/scripts/build.sh"
+  cp "$workspace_root/scripts/get_native_properties.sh" "$worktree/scripts/get_native_properties.sh"
+  cp "$workspace_root/scripts/net.sh" "$worktree/scripts/net.sh"
   cp "$workspace_root/scripts/lib/guards.sh" "$worktree/scripts/lib/guards.sh"
   cp "$workspace_root/manifests/nnue.json" "$worktree/manifests/nnue.json"
   chmod +x "$worktree/scripts/nnue-prefetch.sh" "$worktree/scripts/build.sh"
@@ -133,13 +135,22 @@ install_fake_make() {
   tee "$target" >/dev/null <<'SH'
 #!/bin/sh
 set -eu
-printf '%s\n' invoked >>"$MAKE_LOG"
+printf '%s\n' "$*" >>"$MAKE_LOG"
 [ "$1" = -C ] || exit 81
 stage_src=$2
 shift 2
-[ "$1" = 'ARCH=x86-64' ] || exit 82
-[ "$2" = all ] || exit 83
-[ "$#" -eq 2 ] || exit 84
+[ "$1" = "ARCH=${EXPECTED_ARCH:-x86-64}" ] || exit 82
+shift
+if [ -n "${EXPECTED_JOBS:-}" ]; then
+  [ "$1" = "-j$EXPECTED_JOBS" ] || exit 88
+  shift
+fi
+[ "$1" = "${EXPECTED_TARGET:-all}" ] || exit 83
+[ "$#" -eq 1 ] || exit 84
+if [ "${EXPECTED_SUPPORT_SCRIPTS:-false}" = true ]; then
+  [ -x "$stage_src/../scripts/get_native_properties.sh" ] || exit 89
+  [ -x "$stage_src/../scripts/net.sh" ] || exit 90
+fi
 [ ! -L "$stage_src/$EXPECTED_FILENAME" ] || exit 85
 actual=$(sha256sum "$stage_src/$EXPECTED_FILENAME" | cut -d ' ' -f 1)
 [ "$actual" = "$EXPECTED_DIGEST" ] || exit 86
@@ -150,10 +161,22 @@ SH
   chmod +x "$target"
 }
 
+install_fake_getconf() {
+  target=$1
+  tee "$target" >/dev/null <<'SH'
+#!/bin/sh
+set -eu
+[ "$#" -eq 1 ] && [ "$1" = _NPROCESSORS_ONLN ] || exit 89
+printf '%s\n' 7
+SH
+  chmod +x "$target"
+}
+
 new_workspace valid
 write_manifest "$worktree/manifests/nnue.json"
 install_fake_curl "$worktree/bin/curl"
 install_fake_make "$worktree/bin/make"
+install_fake_getconf "$worktree/bin/getconf"
 cache_home="$worktree/cache"
 cache_dir="$cache_home/sf-cor-dev/nnue"
 cache_object="$cache_dir/$test_digest"
@@ -214,6 +237,17 @@ build_output=$(tr -d '\n' <"$build_output_path")
 [ "$build_output" = 'controlled stockfish binary' ] || fail 'offline build did not publish the staged binary'
 [ "$(wc -l <"$make_log")" -eq 1 ] || fail 'offline build did not invoke the upstream make path exactly once'
 assert_digest "$test_digest" "$cache_object"
+
+EXPECTED_ARCH=native EXPECTED_TARGET=profile-build EXPECTED_JOBS=7 EXPECTED_SUPPORT_SCRIPTS=true \
+  export EXPECTED_ARCH EXPECTED_TARGET EXPECTED_JOBS EXPECTED_SUPPORT_SCRIPTS
+(
+  cd "$worktree"
+  ./scripts/build.sh --profile local
+)
+[ "$(wc -l <"$make_log")" -eq 2 ] || fail 'local profile did not invoke make exactly once'
+rg -q 'ARCH=native -j7 profile-build$' "$make_log" ||
+  fail 'local profile did not use native profile-build with detected parallelism'
+unset EXPECTED_ARCH EXPECTED_TARGET EXPECTED_JOBS EXPECTED_SUPPORT_SCRIPTS
 
 printf '%s\n' preserved >"$build_output_path"
 MAKE_FAIL=1 export MAKE_FAIL

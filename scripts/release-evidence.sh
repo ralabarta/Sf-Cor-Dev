@@ -20,11 +20,12 @@ import shutil
 import sys
 import tempfile
 
+GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_TAG = re.compile(r"^dev-[A-Za-z0-9._-]+$")
 ARTIFACTS = {
-    "linux-x64": "stockfish-linux-x64-x86-64-universal.tar.gz",
-    "windows-x64": "stockfish-windows-x64-x86-64-universal.zip",
+    "linux-x64": "stockfish-linux-x86-64.tar.gz",
+    "windows-x64": "stockfish-windows-x86-64.zip",
 }
 
 
@@ -56,7 +57,13 @@ def load_array(path, label):
     return value
 
 
-def require_sha(value, label):
+def require_git_sha(value, label):
+    if not isinstance(value, str) or not GIT_SHA.fullmatch(value):
+        die(f"invalid {label}")
+    return value
+
+
+def require_sha256(value, label):
     if not isinstance(value, str) or not SHA256.fullmatch(value):
         die(f"invalid {label}")
     return value
@@ -69,8 +76,8 @@ def canonical_bytes(value):
 def validate_provenance(value):
     if not isinstance(value, dict):
         die("release provenance is absent")
-    require_sha(value.get("source_sha"), "provenance source SHA")
-    require_sha(value.get("nnue_sha256"), "provenance NNUE digest")
+    require_git_sha(value.get("source_sha"), "provenance source SHA")
+    require_sha256(value.get("nnue_sha256"), "provenance NNUE digest")
     if not isinstance(value.get("nnue_filename"), str) or not value["nnue_filename"]:
         die("provenance NNUE filename is absent")
     if not isinstance(value.get("gpl_source_url"), str) or not value["gpl_source_url"].startswith("https://"):
@@ -110,8 +117,8 @@ def join(metadata_name, artifacts_name, output_name):
         die("platform NNUE identity mismatch")
     if len(source_urls) != 1:
         die("platform GPL source URL mismatch")
-    source_sha = require_sha(source_values.pop(), "source SHA")
-    nnue_digest = require_sha(network_digests.pop(), "NNUE digest")
+    source_sha = require_git_sha(source_values.pop(), "source SHA")
+    nnue_digest = require_sha256(network_digests.pop(), "NNUE digest")
     nnue_filename = network_names.pop()
     if not isinstance(nnue_filename, str) or not re.fullmatch(r"nn-[A-Za-z0-9._-]+\.nnue", nnue_filename):
         die("invalid NNUE filename")
@@ -125,7 +132,7 @@ def join(metadata_name, artifacts_name, output_name):
         expected_name = ARTIFACTS[platform]
         if record.get("schema") != 1 or record.get("artifact") != expected_name:
             die("artifact identity mismatch")
-        declared = require_sha(record.get("artifact_sha256"), "artifact checksum")
+        declared = require_sha256(record.get("artifact_sha256"), "artifact checksum")
         artifact_path = artifacts_dir / expected_name
         if artifact_path.is_symlink() or not artifact_path.is_file():
             die("required artifact is absent or unsafe")

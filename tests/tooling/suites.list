@@ -2,6 +2,7 @@ tests/tooling/test_runner.sh
 tests/tooling/test_ancestry.sh
 tests/tooling/test_intake.sh
 tests/tooling/test_nnue.sh
+tests/tooling/test_update_local.sh
 tests/tooling/test_gates.sh
 tests/tooling/test_activation.sh
 tests/tooling/test_prerelease.sh

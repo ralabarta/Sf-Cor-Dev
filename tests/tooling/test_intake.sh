@@ -54,7 +54,7 @@ patch_sha() {
 official_repo="$tmp_dir/official-source"
 corchess_repo="$tmp_dir/corchess-source"
 mkdir -p "$official_repo"
-git -C "$official_repo" init -q -b main
+git -C "$official_repo" init -q -b master
 configure_git "$official_repo"
 printf '%s\n' official >"$official_repo/engine.txt"
 git -C "$official_repo" add engine.txt
@@ -84,7 +84,6 @@ git -C "$corchess_repo" switch -q -c aggregate "$delta_two"
 printf '%s\n' side >"$corchess_repo/side.txt"
 git -C "$corchess_repo" add side.txt
 git -C "$corchess_repo" commit -q -m 'side delta'
-side_sha=$(git -C "$corchess_repo" rev-parse HEAD)
 git -C "$corchess_repo" switch -q corchess
 printf '%s\n' tip >"$corchess_repo/tip.txt"
 git -C "$corchess_repo" add tip.txt
@@ -92,6 +91,9 @@ git -C "$corchess_repo" commit -q -m 'tip delta'
 git -C "$corchess_repo" merge -q --no-ff aggregate -m 'aggregate merge'
 merge_delta=$(git -C "$corchess_repo" rev-parse HEAD)
 corchess_sha=$(git -C "$corchess_repo" rev-parse corchess)
+git -C "$corchess_repo" switch -q -c default-head "$official_sha"
+[ "$(git -C "$corchess_repo" rev-parse HEAD)" != "$corchess_sha" ] ||
+  fail 'CorChess fixture HEAD must differ from refs/heads/corchess'
 
 write_upstreams() {
   destination=$1
@@ -102,8 +104,8 @@ write_upstreams() {
   printf '%s\n' \
     '{' \
     '  "schema": 1,' \
-    "  \"official\": {\"url\": \"$official_url\", \"commit\": \"$official_ref\"}," \
-    "  \"corchess\": {\"url\": \"$corchess_url\", \"commit\": \"$corchess_ref\"}" \
+    "  \"official\": {\"url\": \"$official_url\", \"ref\": \"refs/heads/master\", \"commit\": \"$official_ref\"}," \
+    "  \"corchess\": {\"url\": \"$corchess_url\", \"ref\": \"refs/heads/corchess\", \"commit\": \"$corchess_ref\"}" \
     '}' >"$destination"
 }
 
@@ -159,13 +161,19 @@ manifest_digest=$(sha256sum "$worktree/manifests/corchess-deltas.json" | cut -d 
 expected=$(printf 'applying %s\napplying %s' "$delta_one" "$delta_two")
 actual=$(applying_lines "$tmp_dir/intake.out")
 [ "$actual" = "$expected" ] || fail 'intake output did not preserve queue order'
-file_contains "official $official_sha" "$tmp_dir/discovery.out" ||
-  fail 'discovery did not preserve official identity'
-file_contains "corchess $corchess_sha" "$tmp_dir/discovery.out" ||
-  fail 'discovery did not preserve CorChess identity'
+file_contains '"source":"official"' "$tmp_dir/discovery.out" ||
+  fail 'discovery did not identify the official source'
+file_contains '"ref":"refs/heads/master"' "$tmp_dir/discovery.out" ||
+  fail 'discovery did not query the exact official ref'
+file_contains '"source":"corchess"' "$tmp_dir/discovery.out" ||
+  fail 'discovery did not identify the CorChess source'
+file_contains '"ref":"refs/heads/corchess"' "$tmp_dir/discovery.out" ||
+  fail 'discovery did not query the exact CorChess ref'
+[ "$(rg -o '"status":"unchanged"' "$tmp_dir/discovery.out" | wc -l)" -eq 2 ] ||
+  fail 'discovery did not report stable unchanged statuses'
 
 git -C "$worktree" commit -q -m 'accept reviewed integration'
-git -C "$worktree" switch -q main
+git -C "$worktree" switch -q master
 mkdir -p "$worktree/evidence" "$worktree/activation" "$worktree/release"
 printf '%s\n' preserved >"$worktree/evidence/state"
 printf '%s\n' preserved >"$worktree/activation/state"
@@ -214,7 +222,7 @@ git -C "$worktree" update-ref "refs/heads/integrate/$manifest_digest" "$valid_in
 git -C "$worktree" switch -q "integrate/$manifest_digest"
 printf '%s\n' tampered >"$worktree/order.txt"
 git -C "$worktree" commit -q -am 'tamper with integration result'
-git -C "$worktree" switch -q main
+git -C "$worktree" switch -q master
 before_mismatch=$(unchanged_state)
 expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
 file_contains 'integration branch already exists with different content' "$tmp_dir/command.err" ||
@@ -232,7 +240,7 @@ write_upstreams "$worktree/manifests/upstreams.json" "file://$official_repo" \
 git -C "$worktree" add manifests/upstreams.json
 git -C "$worktree" commit -q -m 'declare foreign CorChess source'
 expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
-[ "$(git -C "$worktree" branch --show-current)" = main ] ||
+[ "$(git -C "$worktree" branch --show-current)" = master ] ||
   fail 'unproven local object changed branch'
 
 new_worktree 'hostile paths'
@@ -258,13 +266,13 @@ expect_fail "$worktree/scripts/discover.sh"
 new_worktree 'dirty state'
 printf '%s\n' dirty >>"$worktree/engine.txt"
 expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
-[ "$(git -C "$worktree" branch --show-current)" = main ] || fail 'dirty intake changed branch'
+[ "$(git -C "$worktree" branch --show-current)" = master ] || fail 'dirty intake changed branch'
 
 new_worktree 'staged state'
 printf '%s\n' staged >"$worktree/staged.txt"
 git -C "$worktree" add staged.txt
 expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
-[ "$(git -C "$worktree" branch --show-current)" = main ] || fail 'staged intake changed branch'
+[ "$(git -C "$worktree" branch --show-current)" = master ] || fail 'staged intake changed branch'
 
 new_worktree 'invalid evidence'
 write_deltas "$worktree/manifests/corchess-deltas.json" "$delta_one"
@@ -278,14 +286,14 @@ PY
 git -C "$worktree" add manifests/corchess-deltas.json
 git -C "$worktree" commit -q -m 'use invalid patch evidence'
 expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
-[ "$(git -C "$worktree" branch --show-current)" = main ] || fail 'invalid evidence changed branch'
+[ "$(git -C "$worktree" branch --show-current)" = master ] || fail 'invalid evidence changed branch'
 
 new_worktree 'aggregate merge'
 write_deltas "$worktree/manifests/corchess-deltas.json" "$merge_delta"
 git -C "$worktree" add manifests/corchess-deltas.json
 git -C "$worktree" commit -q -m 'select aggregate merge'
 expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
-[ "$(git -C "$worktree" branch --show-current)" = main ] || fail 'aggregate merge changed branch'
+[ "$(git -C "$worktree" branch --show-current)" = master ] || fail 'aggregate merge changed branch'
 
 new_worktree 'conflict'
 write_upstreams "$worktree/manifests/upstreams.json" "file://$official_repo" \
@@ -294,8 +302,20 @@ corchess_sha=$conflict_delta
 write_deltas "$worktree/manifests/corchess-deltas.json" "$conflict_delta"
 git -C "$worktree" add manifests
 git -C "$worktree" commit -q -m 'select conflicting delta'
+mkdir -p "$worktree/evidence" "$worktree/activation" "$worktree/release"
+printf '%s\n' preserved >"$worktree/evidence/state"
+printf '%s\n' preserved >"$worktree/activation/state"
+printf '%s\n' preserved >"$worktree/release/state"
+git -C "$worktree" add evidence activation release
+git -C "$worktree" commit -q -m 'record conflict test protected state'
+before_conflict=$(unchanged_state)
 expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
-[ -n "$(git -C "$worktree" diff --name-only --diff-filter=U)" ] ||
-  fail 'conflict was resolved automatically'
+after_conflict=$(unchanged_state)
+[ "$after_conflict" = "$before_conflict" ] ||
+  fail 'conflicting intake mutated caller branch, refs, index, worktree, or cherry-pick state'
+[ -z "$(git -C "$worktree" diff --name-only --diff-filter=U)" ] ||
+  fail 'conflicting intake leaked unresolved paths into the caller'
+[ ! -e "$worktree/.git/CHERRY_PICK_HEAD" ] ||
+  fail 'conflicting intake leaked cherry-pick state into the caller'
 
 printf '%s\n' 'intake tests passed'
