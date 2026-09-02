@@ -40,7 +40,7 @@ assert workflow["permissions"] == {}
 assert set(workflow["jobs"]) == {"compatibility"}
 job = workflow["jobs"]["compatibility"]
 assert job["runs-on"] == "ubuntu-24.04"
-assert job["permissions"] == {"contents": "read"}
+assert job["permissions"] == {"contents": "read", "models": "read"}
 assert job["env"]["SOURCE_SHA"] == "${{ github.event.pull_request.head.sha || github.sha }}"
 assert job["env"]["RUN_ID"] == "${{ github.event_name }}-${{ github.run_id }}-${{ github.run_attempt }}"
 
@@ -55,7 +55,7 @@ assert checkout["with"] == {
 upload = steps[-1]
 assert upload["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 assert upload["if"] == "always()"
-assert upload["with"]["if-no-files-found"] == "error"
+assert upload["with"]["if-no-files-found"] == "warn"
 assert upload["with"]["name"] == "compatibility-evidence-${{ env.SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}"
 assert upload["with"]["path"] == "evidence/${{ env.SOURCE_SHA }}/${{ env.RUN_ID }}"
 assert upload["with"]["retention-days"] == "14"
@@ -68,14 +68,27 @@ assert uses == [
 assert all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action) for action in uses)
 
 runs = [step["run"] for step in steps if "run" in step]
-assert len(runs) == 2
+assert len(runs) == 5
 assert all("${{" not in script for script in runs)
-binding, gates = runs
+binding, gga_install, gga_review, dependencies, gates = runs
 for required in (
     'test "${#SOURCE_SHA}" -eq 40',
     'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"',
 ):
     assert required in binding
+for required in (
+    "gentleman-guardian-angel/archive/refs/tags/v2.10.1.tar.gz",
+    'sha256sum --check --strict',
+):
+    assert required in gga_install
+assert "c1dbcee120b83238e1c7ecce4a60f88a66810796ad95a239debc09e8509d0fba" in workflow_text
+assert "env gga run --ci" in gga_review
+assert "GGA_PROVIDER" in workflow_text and "github:gpt-4.1" in workflow_text
+for required in (
+    "sudo apt-get update",
+    "sudo apt-get install --no-install-recommends --yes expect ripgrep",
+):
+    assert required in dependencies
 for required in (
     "scripts/nnue-prefetch.sh manifests/nnue.json",
     "scripts/build.sh manifests/nnue.json",
