@@ -223,6 +223,9 @@ assert "scripts/release-evidence.sh plan-publish" in text
 assert "env gga run --ci" in text
 assert "models: read" in text
 assert "gentleman-guardian-angel/archive/refs/tags/v2.10.1.tar.gz" in text
+assert "models.github.ai/inference/chat/completions" in text
+assert "text.count(old) != 1" in text
+assert "env gga --version" in text
 assert 'IFS= read -r version' in text
 assert 'test "$version" = "gga v$GGA_VERSION"' in text
 assert "c1dbcee120b83238e1c7ecce4a60f88a66810796ad95a239debc09e8509d0fba" in text

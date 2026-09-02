@@ -80,6 +80,9 @@ for required in (
 for required in (
     "gentleman-guardian-angel/archive/refs/tags/v2.10.1.tar.gz",
     'sha256sum --check --strict',
+    'models.github.ai/inference/chat/completions',
+    'text.count(old) != 1',
+    'env gga --version',
     'IFS= read -r version',
     'test "$version" = "gga v$GGA_VERSION"',
 ):
