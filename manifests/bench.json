@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "expected_nodes": 2497913,
+  "command": "bench",
+  "source_commit": "3f6f417b87c0e80ee30914b6b539b4ab7d3b2a5b",
+  "baseline_commit": "2edd935bbb3ea6e484a1700f582a95e0ee773ec2"
+}
