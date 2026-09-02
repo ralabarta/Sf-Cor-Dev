@@ -3,3 +3,4 @@ tests/tooling/test_ancestry.sh
 tests/tooling/test_intake.sh
 tests/tooling/test_nnue.sh
 tests/tooling/test_gates.sh
+tests/tooling/test_activation.sh
