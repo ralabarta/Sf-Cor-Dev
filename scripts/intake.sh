@@ -18,7 +18,8 @@ acquire_intake_lock "$root"
 parsed=$(mktemp)
 patch_file=$(mktemp)
 provenance_repo=$(mktemp -d)
-trap 'rm -f "$parsed" "$patch_file"; rm -rf "$provenance_repo"; rmdir "$intake_lock"' EXIT HUP INT TERM
+candidate_repo=$(mktemp -d)
+trap 'rm -f "$parsed" "$patch_file"; rm -rf "$provenance_repo" "$candidate_repo"; rmdir "$intake_lock"' EXIT HUP INT TERM
 git -C "$provenance_repo" init -q --bare
 python3 - "$upstreams" "$deltas" >"$parsed" <<'PY'
 import json
@@ -119,7 +120,21 @@ done <"$parsed"
 manifest_digest=$(sha256sum "$deltas" | cut -d ' ' -f 1)
 branch="integrate/$manifest_digest"
 if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
-  fail "integration branch already exists: $branch"
+  git -C "$candidate_repo" init -q
+  git -C "$candidate_repo" fetch -q --no-tags "$provenance_repo" "$official_sha" "$corchess_sha"
+  git -C "$candidate_repo" switch -q --detach "$official_sha"
+  while IFS="$tab" read -r record commit expected extra; do
+    [ "$record" = D ] || continue
+    git -C "$candidate_repo" cherry-pick --no-commit "$commit" ||
+      fail "reviewed delta conflicts and requires human resolution: $commit"
+  done <"$parsed"
+  expected_tree=$(git -C "$candidate_repo" write-tree)
+  branch_tree=$(git -C "$root" rev-parse "refs/heads/$branch^{tree}")
+  [ "$branch_tree" = "$expected_tree" ] || fail "integration branch already exists with different content: $branch"
+  git -C "$root" merge-base --is-ancestor "$official_sha" "refs/heads/$branch" ||
+    fail "integration branch does not preserve official ancestry: $branch"
+  printf '%s\n' 'no changes'
+  exit 0
 fi
 
 git -C "$root" switch -q -c "$branch" "$official_sha"

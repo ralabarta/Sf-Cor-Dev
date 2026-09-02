@@ -164,6 +164,65 @@ file_contains "official $official_sha" "$tmp_dir/discovery.out" ||
 file_contains "corchess $corchess_sha" "$tmp_dir/discovery.out" ||
   fail 'discovery did not preserve CorChess identity'
 
+git -C "$worktree" commit -q -m 'accept reviewed integration'
+git -C "$worktree" switch -q main
+mkdir -p "$worktree/evidence" "$worktree/activation" "$worktree/release"
+printf '%s\n' preserved >"$worktree/evidence/state"
+printf '%s\n' preserved >"$worktree/activation/state"
+printf '%s\n' preserved >"$worktree/release/state"
+git -C "$worktree" add evidence activation release
+git -C "$worktree" commit -q -m 'record protected state'
+unchanged_state() {
+  {
+    git -C "$worktree" rev-parse HEAD
+    git -C "$worktree" for-each-ref --format='%(refname) %(objectname)'
+    git -C "$worktree" status --porcelain=v2 --branch
+    git -C "$worktree" ls-files -s
+    sha256sum "$worktree/manifests/upstreams.json" \
+      "$worktree/manifests/corchess-deltas.json" \
+      "$worktree/evidence/state" "$worktree/activation/state" "$worktree/release/state"
+  } | sha256sum | cut -d ' ' -f 1
+}
+before_unchanged=$(unchanged_state)
+(
+  cd "$worktree"
+  ./scripts/intake.sh >"$tmp_dir/unchanged.out"
+)
+printf '%s\n' 'no changes' >"$tmp_dir/expected-unchanged.out"
+cmp -s "$tmp_dir/expected-unchanged.out" "$tmp_dir/unchanged.out" ||
+  fail 'unchanged intake did not report exactly no changes'
+after_unchanged=$(unchanged_state)
+[ "$after_unchanged" = "$before_unchanged" ] ||
+  fail 'unchanged intake mutated source, refs, provenance, activation, release, or integration state'
+
+valid_integration_commit=$(git -C "$worktree" rev-parse "refs/heads/integrate/$manifest_digest")
+integration_tree=$(git -C "$worktree" rev-parse "$valid_integration_commit^{tree}")
+unrelated_commit=$(printf '%s\n' 'same tree without official ancestry' |
+  git -C "$worktree" commit-tree "$integration_tree")
+git -C "$worktree" update-ref "refs/heads/integrate/$manifest_digest" "$unrelated_commit"
+before_unrelated=$(unchanged_state)
+expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+file_contains 'integration branch does not preserve official ancestry' "$tmp_dir/command.err" ||
+  fail 'same-tree integration branch without official ancestry was not rejected'
+[ ! -s "$tmp_dir/command.out" ] ||
+  fail 'same-tree integration branch without official ancestry reported no changes'
+after_unrelated=$(unchanged_state)
+[ "$after_unrelated" = "$before_unrelated" ] ||
+  fail 'unrelated-history integration check mutated protected state'
+git -C "$worktree" update-ref "refs/heads/integrate/$manifest_digest" "$valid_integration_commit"
+
+git -C "$worktree" switch -q "integrate/$manifest_digest"
+printf '%s\n' tampered >"$worktree/order.txt"
+git -C "$worktree" commit -q -am 'tamper with integration result'
+git -C "$worktree" switch -q main
+before_mismatch=$(unchanged_state)
+expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+file_contains 'integration branch already exists with different content' "$tmp_dir/command.err" ||
+  fail 'mismatched integration branch did not fail closed'
+after_mismatch=$(unchanged_state)
+[ "$after_mismatch" = "$before_mismatch" ] ||
+  fail 'mismatched integration check mutated protected state'
+
 new_worktree 'declared source provenance'
 git -C "$worktree" fetch -q "file://$corchess_repo" "$corchess_sha"
 foreign_source="$tmp_dir/foreign-source"
