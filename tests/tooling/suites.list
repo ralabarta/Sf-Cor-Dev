@@ -1,2 +1,3 @@
 tests/tooling/test_runner.sh
 tests/tooling/test_ancestry.sh
+tests/tooling/test_intake.sh
