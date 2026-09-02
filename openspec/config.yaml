@@ -1,0 +1,63 @@
+schema: spec-driven
+project: sf-cor-dev
+artifact_store: hybrid
+
+context: |
+  Repository type: tooling-only collaboration baseline; no application stack is selected.
+  Architecture: configuration and documentation baseline for Gentle AI, GGA, Engram, and Codegraph.
+  Testing: deterministic workspace shell runner at tests/tooling/run.sh; Strict TDD is enabled.
+  Conventions: English technical artifacts; minimal reproducible changes; Codegraph-first navigation; fresh applicable checks and GGA before delivery.
+  Persistence: OpenSpec and Engram are equally authoritative; local Engram memory chunks are not versioned.
+
+strict_tdd: true
+
+testing:
+  requested_strict_tdd: true
+  resolution: enabled
+  resolution_reason: The deterministic workspace command tests/tooling/run.sh covers every declared tooling suite.
+  detected: 2026-09-01
+  workspace_test_command: "tests/tooling/run.sh"
+  projects: []
+  layers:
+    unit: unavailable
+    integration: available
+    e2e: unavailable
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter: ""
+    type_checker: ""
+    formatter: ""
+
+workflow:
+  execution_mode: auto
+  delivery_strategy: auto-chain
+  review_budget_lines: 400
+
+rules:
+  proposal:
+    - Keep scope explicit and include rollback guidance for risky changes.
+  specs:
+    - Use RFC 2119 keywords and Given/When/Then scenarios.
+  design:
+    - Record architecture decisions and rationale; add sequence diagrams only for complex flows.
+  tasks:
+    - Group work into hierarchical, reviewable units that fit the 400-line review budget.
+    - Do not schedule implementation until an explicit workspace-wide test command enables Strict TDD.
+  apply:
+    guidelines:
+      - Follow existing repository conventions and keep changes minimal.
+      - Use Codegraph before textual code searches when the index exists.
+      - Do not modify receipt-driven development mode without explicit authorization.
+    tdd: true
+    test_command: "tests/tooling/run.sh"
+  verify:
+    test_command: "tests/tooling/run.sh"
+    build_command: ""
+    coverage_threshold: 0
+    required_checks:
+      - Run fresh applicable checks and GGA before delivery.
+  archive:
+    - Preserve archived changes as an immutable audit trail.
+    - Warn before merging destructive deltas.
