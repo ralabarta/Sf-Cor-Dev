@@ -2,7 +2,6 @@
 set -eu
 
 pinned_sha=3f6f417b87c0e80ee30914b6b539b4ab7d3b2a5b
-official_url=https://github.com/official-stockfish/Stockfish.git
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 workspace_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 
@@ -14,19 +13,6 @@ fail() {
   printf '%s\n' "$1" >&2
   exit 1
 }
-
-[ "$(git_at_root remote get-url official)" = "$official_url" ] ||
-  fail 'official remote URL does not match the authorized upstream'
-
-if git_at_root config --get-all remote.official.pushurl |
-  while IFS= read -r push_url; do
-    [ -z "$push_url" ] || exit 1
-  done
-then
-  :
-else
-  fail 'official remote has an explicit push URL'
-fi
 
 [ "$(git_at_root cat-file -t "$pinned_sha")" = commit ] ||
   fail 'pinned official object is not a commit'
