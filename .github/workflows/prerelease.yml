@@ -122,12 +122,17 @@ jobs:
         run: |
           scripts/nnue-prefetch.sh manifests/nnue.json
           test "$(scripts/nnue-prefetch.sh --verify-only manifests/nnue.json)" = "$EXPECTED_NNUE_FILENAME $EXPECTED_NNUE_SHA256"
-          scripts/build.sh manifests/nnue.json
+          cache_object="${XDG_CACHE_HOME:-$HOME/.cache}/sf-cor-dev/nnue/$EXPECTED_NNUE_SHA256"
+          cp "$cache_object" "src/$EXPECTED_NNUE_FILENAME"
+          test "$(sha256sum "src/$EXPECTED_NNUE_FILENAME" | cut -d ' ' -f 1)" = "$EXPECTED_NNUE_SHA256"
+          make -C src ARCH=x86-64 all
+          mkdir -p build
+          cp src/stockfish.exe build/stockfish.exe
           python3 - <<'PY'
           import hashlib, json, os, zipfile
           name = "stockfish-windows-x64-x86-64-universal.zip"
           with zipfile.ZipFile(name, "w", zipfile.ZIP_DEFLATED) as archive:
-              archive.write("build/stockfish", "stockfish.exe")
+              archive.write("build/stockfish.exe", "stockfish.exe")
           value = {"schema": 1, "platform": "windows-x64", "artifact": name,
                    "artifact_sha256": hashlib.sha256(open(name, "rb").read()).hexdigest(),
                    "source_sha": os.environ["REVIEWED_SHA"],

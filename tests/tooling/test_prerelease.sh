@@ -207,6 +207,8 @@ for pin in (
     assert pin in text
 assert "ARCH=x86-64" in text or "SF_COR_BUILD_ARCH: x86-64" in text
 assert "x86-64-universal" in text
+assert "src/stockfish.exe" in text
+assert 'archive.write("build/stockfish.exe", "stockfish.exe")' in text
 assert "permissions: {}" in text
 assert "contents: write" in text and "contents: read" in text
 assert "--draft" in text and "--prerelease" in text
