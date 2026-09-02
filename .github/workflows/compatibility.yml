@@ -1,0 +1,60 @@
+name: Compatibility evidence (non-authoritative)
+
+on:
+  pull_request:
+
+# Automatic evidence never grants authority; human review remains mandatory.
+permissions: {}
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.number }}
+      RUN_ID: pr-${{ github.event.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out the exact pull request source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify source binding
+        run: |
+          case "$SOURCE_SHA" in (*[!0-9a-f]*|'') exit 1;; esac
+          test "${#SOURCE_SHA}" -eq 40
+          case "$PR_NUMBER" in (*[!0-9]*|'') exit 1;; esac
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Run fail-closed compatibility gates
+        run: |
+          scripts/nnue-prefetch.sh manifests/nnue.json
+          scripts/build.sh manifests/nnue.json
+          scripts/validate.sh "$RUN_ID"
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path("evidence") / os.environ["SOURCE_SHA"] / os.environ["RUN_ID"]
+          with (root / "summary.json").open(encoding="utf-8") as stream:
+              summary = json.load(stream)
+          with (root / "provenance.json").open(encoding="utf-8") as stream:
+              provenance = json.load(stream)
+          assert summary["status"] == "pass"
+          assert summary["authority"] == "none"
+          assert summary["merge_authorized"] is False
+          assert provenance["authority"] == "none"
+          assert provenance["merge_authorized"] is False
+          assert provenance["source_sha"] == os.environ["SOURCE_SHA"]
+          PY
+      - name: Preserve available gate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: compatibility-evidence-${{ github.event.number }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/${{ env.SOURCE_SHA }}/${{ env.RUN_ID }}
+          if-no-files-found: error
+          retention-days: 14

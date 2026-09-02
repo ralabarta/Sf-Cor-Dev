@@ -30,14 +30,14 @@ PROVIDER="claude"
 #   FILE_PATTERNS="*.ts,*.tsx"
 #   FILE_PATTERNS="*.py"
 #   FILE_PATTERNS="*.go,*.mod"
-FILE_PATTERNS="*.md,*.json,*.yaml,*.yml,*.sh,.gga,.gitignore,.env.example"
+FILE_PATTERNS="*.c,*.cc,*.cpp,*.h,*.hpp,Makefile,*.md,*.json,*.yaml,*.yml,*.sh,.gga,.gitignore,.env.example"
 
 # File patterns to exclude from review (comma-separated)
 # Default: none
 # Examples:
 #   EXCLUDE_PATTERNS="*.test.ts,*.spec.ts"
 #   EXCLUDE_PATTERNS="*_test.go,*.mock.ts"
-EXCLUDE_PATTERNS=".git/*,.cache/*,__pycache__/*,.pytest_cache/*,.mypy_cache/*,.ruff_cache/*,node_modules/*,*.bak,*.backup,*.tmp,*~,.engram/*.db*,.engram/*.jsonl,.engram/chunks/*,.engram/memory/*,.engram/observations/*"
+EXCLUDE_PATTERNS=".git/*,.cache/*,__pycache__/*,.pytest_cache/*,.mypy_cache/*,.ruff_cache/*,node_modules/*,build/*,evidence/*,graphify-out/*,src/incbin/*,.github/ci/*,README.stockfish.md,*.bak,*.backup,*.tmp,*~,.engram/*.db*,.engram/*.jsonl,.engram/chunks/*,.engram/memory/*,.engram/observations/*"
 
 # File containing code review rules
 # Default: AGENTS.md

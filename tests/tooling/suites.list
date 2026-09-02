@@ -5,3 +5,4 @@ tests/tooling/test_nnue.sh
 tests/tooling/test_gates.sh
 tests/tooling/test_activation.sh
 tests/tooling/test_prerelease.sh
+tests/tooling/test_workflows.sh
