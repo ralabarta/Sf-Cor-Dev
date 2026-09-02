@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-workspace_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+workspace_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -94,6 +94,12 @@ elif [ "\${LARGE_GATE:-}" = '$gate' ]; then
 print('x' * 70000)
 PY
 else
+  if [ '$gate' = bench ] && [ "\${BENCH_PADDING_BYTES:-0}" -gt 0 ]; then
+    python3 - "\$BENCH_PADDING_BYTES" <<'PY'
+import sys
+sys.stdout.write('x' * int(sys.argv[1]))
+PY
+  fi
   printf '%b\n' '$output'
 fi
 SH
@@ -141,7 +147,7 @@ smoke'
 [ "$(cat "$order_log")" = "$expected_order" ] || fail 'gates did not run in required order'
 evidence="$worktree/evidence/$source_sha/run-pass"
 [ -d "$evidence" ] && [ ! -L "$evidence" ] || fail 'passing evidence directory is absent or unsafe'
-assert_json "$evidence/provenance.json" 'value["source_sha"] == "'$source_sha'" and value["manifest_digests"].keys() == {"bench", "corchess_deltas", "nnue", "upstreams"}'
+assert_json "$evidence/provenance.json" 'value["source_sha"] == "'"$source_sha"'" and value["manifest_digests"].keys() == {"bench", "corchess_deltas", "nnue", "upstreams"}'
 assert_json "$evidence/summary.json" 'value["status"] == "pass" and value["merge_authorized"] is False and value["authority"] == "none" and [item["name"] for item in value["ordered_results"]] == ["provenance", "nnue", "build", "uci", "bench", "perft", "reprosearch", "smoke"]'
 python3 - "$evidence" <<'PY'
 import hashlib, json, pathlib, sys
@@ -161,7 +167,7 @@ for gate in provenance nnue build uci bench perft reprosearch smoke; do
   expect_fail run_validate "fail-$gate" "FAIL_GATE=$gate"
   failed="$worktree/evidence/$source_sha/fail-$gate"
   assert_json "$failed/summary.json" 'value["status"] == "fail" and value["merge_authorized"] is False'
-  assert_json "$failed/results/$(printf '%02d' $(case $gate in provenance) echo 1;; nnue) echo 2;; build) echo 3;; uci) echo 4;; bench) echo 5;; perft) echo 6;; reprosearch) echo 7;; smoke) echo 8;; esac))-$gate.json" 'value["status"] == "fail" and value["exit_code"] == 23'
+  assert_json "$failed/results/$(printf '%02d' "$(case $gate in provenance) echo 1;; nnue) echo 2;; build) echo 3;; uci) echo 4;; bench) echo 5;; perft) echo 6;; reprosearch) echo 7;; smoke) echo 8;; esac)")-$gate.json" 'value["status"] == "fail" and value["exit_code"] == 23'
 done
 
 for gate in provenance nnue build uci bench perft reprosearch smoke; do
@@ -169,6 +175,21 @@ for gate in provenance nnue build uci bench perft reprosearch smoke; do
   assert_json "$worktree/evidence/$source_sha/malformed-$gate/summary.json" 'value["status"] == "fail"'
 done
 [ "$(sha256sum "$worktree/manifests/bench.json" | cut -d ' ' -f 1)" = "$bench_before" ] || fail 'validation updated its reviewed bench expectation'
+
+run_validate large-valid-bench BENCH_PADDING_BYTES=70000
+large_valid_bench="$worktree/evidence/$source_sha/large-valid-bench"
+assert_json "$large_valid_bench/summary.json" 'value["status"] == "pass" and value["merge_authorized"] is False'
+assert_json "$large_valid_bench/results/05-bench.json" 'value["status"] == "pass" and value["exit_code"] == 0'
+large_valid_bench_size=$(wc -c <"$large_valid_bench/logs/05-bench.log")
+[ "$large_valid_bench_size" -gt 65536 ] && [ "$large_valid_bench_size" -le 131072 ] ||
+  fail 'valid large bench evidence did not use its explicit bounded allowance'
+
+expect_fail run_validate oversized-bench BENCH_PADDING_BYTES=140000
+oversized_bench="$worktree/evidence/$source_sha/oversized-bench"
+assert_json "$oversized_bench/summary.json" 'value["status"] == "fail" and value["merge_authorized"] is False'
+assert_json "$oversized_bench/results/05-bench.json" 'value["status"] == "fail" and value["exit_code"] == 0'
+[ "$(wc -c <"$oversized_bench/logs/05-bench.log")" -eq 131072 ] || fail 'oversized bench evidence was not bounded'
+! rg -q '^compatibility evidence passed:' "$tmp_dir/command.out" || fail 'oversized bench printed terminal PASS'
 
 expect_fail run_validate oversized-smoke LARGE_GATE=smoke
 oversized="$worktree/evidence/$source_sha/oversized-smoke"

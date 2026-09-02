@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=scripts/lib/guards.sh
 . "$script_dir/lib/guards.sh"
 
@@ -52,6 +52,7 @@ print(value["expected_nodes"], value["source_commit"], value["baseline_commit"])
 PY
 ) || fail 'reviewed bench manifest is invalid'
 set -f
+# shellcheck disable=SC2086 # Intentional splitting of three validated manifest fields.
 set -- $bench_values
 set +f
 [ "$#" -eq 3 ] || fail 'reviewed bench manifest is invalid'
@@ -161,6 +162,7 @@ PY
 
 engine=${SF_COR_ENGINE:-$root/build/stockfish}
 max_log_bytes=65536
+bench_max_log_bytes=131072
 previous=null
 order=0
 
@@ -227,11 +229,13 @@ run_gate() {
   fi
   log="logs/$number-$gate.log"
   size=$(wc -c <"$raw")
-  dd if="$raw" of="$work/$log" bs=$max_log_bytes count=1 2>/dev/null
+  gate_log_bytes=$max_log_bytes
+  [ "$gate" != bench ] || gate_log_bytes=$bench_max_log_bytes
+  dd if="$raw" of="$work/$log" bs=$gate_log_bytes count=1 2>/dev/null
   rm -f "$raw"
   status=pass
   [ "$exit_code" -eq 0 ] || status=fail
-  [ "$size" -le "$max_log_bytes" ] || status=fail
+  [ "$size" -le "$gate_log_bytes" ] || status=fail
   if [ "$status" = pass ] && ! validate_output "$gate" "$work/$log"; then status=fail; fi
   result="results/$number-$gate.json"
   write_json "$work/$result" "$(python3 - "$command" "$exit_code" "$log" "$gate" "$order" "$previous" "$status" <<'PY'
