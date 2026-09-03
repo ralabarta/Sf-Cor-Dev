@@ -337,6 +337,10 @@ assert "--sort=name" in text and "gzip -n" in text
 assert "ZipInfo" in text and "1980, 1, 1, 0, 0, 0" in text
 assert "src/stockfish.exe" in text
 assert 'archive.writestr(info, pathlib.Path("build/Sf-Cor-Dev.exe").read_bytes())' in text
+setup = re.search(r"msys2/setup-msys2@[^\n]+\n(?:\s+.*\n)*?\s+install: ([^\n]+)", text)
+assert setup and setup.group(1).split() == [
+    "mingw-w64-ucrt-x86_64-gcc", "make", "python", "curl", "git"
+]
 assert "permissions: {}" in text
 assert "contents: write" in text and "contents: read" in text
 assert "--draft" in text and "--prerelease" in text
