@@ -48,6 +48,7 @@ new_workspace() {
   cp "$workspace_root/manifests/corchess-deltas.json" "$worktree/manifests/corchess-deltas.json"
   chmod +x "$worktree/scripts/validate.sh"
   printf '%s\n' fixture >"$worktree/source.txt"
+  printf '%s\n' 'src/*.o' 'src/stockfish' 'tests/*.tmp' >"$worktree/.gitignore"
   expected_fixture_bench=$(python3 - "$worktree/manifests/bench.json" <<'PY'
 import json, sys
 print(json.load(open(sys.argv[1], encoding="utf-8"))["expected_nodes"])
@@ -275,6 +276,14 @@ for dirty_state in tracked staged relevant-untracked; do
   [ ! -e "$worktree/evidence" ] || fail "$dirty_state source state created misleading evidence"
   [ ! -s "$order_log" ] || fail "$dirty_state source state ran a gate command"
 done
+
+new_workspace ignored-generated-inputs
+install_gates
+mkdir -p "$worktree/src" "$worktree/tests"
+printf '%s\n' stale >"$worktree/src/stale.o"
+printf '%s\n' stale >"$worktree/src/stockfish"
+printf '%s\n' stale >"$worktree/tests/generated.tmp"
+run_validate ignored-generated-inputs
 
 new_workspace generated-outputs
 install_gates

@@ -27,7 +27,7 @@ git -C "$root" diff --quiet -- . ':(exclude)build/**' ':(exclude)evidence/**' ||
   fail 'repository source provenance is not clean'
 git -C "$root" diff --cached --quiet -- . ':(exclude)build/**' ':(exclude)evidence/**' ||
   fail 'repository source provenance is not clean'
-untracked_inputs=$(git -C "$root" ls-files --others -- manifests scripts src tests Copying.txt) ||
+untracked_inputs=$(git -C "$root" ls-files --others --exclude-standard -- manifests scripts src tests Copying.txt) ||
   fail 'cannot inspect repository provenance'
 [ -z "$untracked_inputs" ] || fail 'repository source provenance is not clean'
 

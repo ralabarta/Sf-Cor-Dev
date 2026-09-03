@@ -38,6 +38,12 @@ new_workspace() {
   chmod +x "$worktree/scripts/nnue-prefetch.sh" "$worktree/scripts/build.sh"
   printf '#define EvalFileDefaultName "%s"\n' "$test_filename" >"$worktree/src/evaluate.h"
   printf '%s\n' 'all:' >"$worktree/src/Makefile"
+  printf '%s\n' reviewed >"$worktree/src/reviewed.txt"
+  printf '%s\n' '*.o' '/stockfish' '/Makefile.deps' '/.cache/' '*.nnue' >"$worktree/src/.gitignore"
+  git -C "$worktree" config user.name Test
+  git -C "$worktree" config user.email test@example.invalid
+  git -C "$worktree" add scripts manifests src
+  git -C "$worktree" commit -q -m 'fixture baseline'
 }
 
 for required in manifests/nnue.json scripts/nnue-prefetch.sh scripts/build.sh; do
@@ -151,6 +157,12 @@ if [ "${EXPECTED_SUPPORT_SCRIPTS:-false}" = true ]; then
   [ -x "$stage_src/../scripts/get_native_properties.sh" ] || exit 89
   [ -x "$stage_src/../scripts/net.sh" ] || exit 90
 fi
+if [ "${EXPECTED_CLEAN_STAGE:-false}" = true ]; then
+  [ "$(tr -d '\n' <"$stage_src/reviewed.txt")" = reviewed ] || exit 97
+  for forbidden in stale.o stockfish Makefile.deps .cache/marker unreviewed.cpp nn-stale.nnue; do
+    [ ! -e "$stage_src/$forbidden" ] || exit 98
+  done
+fi
 [ ! -L "$stage_src/$EXPECTED_FILENAME" ] || exit 85
 actual=$(sha256sum "$stage_src/$EXPECTED_FILENAME" | cut -d ' ' -f 1)
 [ "$actual" = "$EXPECTED_DIGEST" ] || exit 86
@@ -225,10 +237,17 @@ after_tamper=$(sha256sum "$cache_object" | cut -d ' ' -f 1)
 cp "$payload" "$cache_object"
 
 build_output_path="$worktree/build/Sf-Cor-Dev"
-mkdir "$worktree/build"
+mkdir -p "$worktree/build" "$worktree/src/.cache"
+printf '%s\n' stale >"$worktree/src/stale.o"
+printf '%s\n' stale >"$worktree/src/stockfish"
+printf '%s\n' stale >"$worktree/src/Makefile.deps"
+printf '%s\n' stale >"$worktree/src/.cache/marker"
+printf '%s\n' stale >"$worktree/src/nn-stale.nnue"
+printf '%s\n' unreviewed >"$worktree/src/unreviewed.cpp"
+printf '%s\n' dirty >"$worktree/src/reviewed.txt"
 printf '%s\n' preserved >"$build_output_path"
 output_before=$(sha256sum "$build_output_path" | cut -d ' ' -f 1)
-export SF_COR_BUILD_OUTPUT="$build_output_path" SF_COR_BUILD_ARCH=x86-64
+export SF_COR_BUILD_OUTPUT="$build_output_path" SF_COR_BUILD_ARCH=x86-64 EXPECTED_CLEAN_STAGE=true
 (
   cd "$worktree"
   ./scripts/build.sh
