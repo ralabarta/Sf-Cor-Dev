@@ -12,6 +12,7 @@ deltas=$(require_owned_manifest "$root" "${2:-manifests/corchess-deltas.json}" c
 require_command git
 require_command python3
 require_command sha256sum
+require_command sort
 require_clean_repository "$root"
 acquire_intake_lock "$root"
 
@@ -226,6 +227,9 @@ done <"$parsed"
 original_head=$(git -C "$root" rev-parse HEAD)
 original_branch=$(git -C "$root" symbolic-ref --quiet --short HEAD) ||
   fail 'intake requires an attached caller branch'
+reviewed_bootstrap_transition=1d33062cc6c68efaf4380f89ef9a6cba1fe09d4f
+manifest_digest=$(sha256sum "$deltas" | cut -d ' ' -f 1)
+branch="integrate/$manifest_digest"
 git -C "$candidate_repo" init -q
 git -C "$candidate_repo" fetch -q --no-tags "$provenance_repo" "$official_sha" "$corchess_sha"
 if [ "$manifest_schema" = 1 ]; then
@@ -238,8 +242,71 @@ if [ "$manifest_schema" = 1 ]; then
   done <"$parsed"
 else
   candidate_parent=$original_head
-  git -C "$candidate_repo" fetch -q --no-tags "$root" "$original_head"
-  git -C "$candidate_repo" switch -q --detach "$original_head"
+  integrated_head=false
+  if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
+    branch_tip=$(git -C "$root" rev-parse "refs/heads/$branch")
+    if [ "$original_head" = "$branch_tip" ]; then
+      parent_line=$(git -C "$root" rev-list --parents -n 1 "$branch_tip")
+      # shellcheck disable=SC2086 # Intentional splitting of a validated rev-list record.
+      set -- $parent_line
+      [ "$#" -eq 2 ] || fail "integration branch does not preserve downstream ancestry: $branch"
+      candidate_parent=$2
+    fi
+  else
+    expected_transition_paths=$(
+      while IFS="$tab" read -r record group path _; do
+        [ "$record" = P ] && printf '%s\n' "$path"
+      done <"$parsed" | LC_ALL=C sort
+    )
+    # shellcheck disable=SC2046 # rev-list emits only validated commit identities.
+    for possible_commit in $(git -C "$root" rev-list --first-parent "$original_head"); do
+      parent_line=$(git -C "$root" rev-list --parents -n 1 "$possible_commit")
+      # shellcheck disable=SC2086 # Intentional splitting of a validated rev-list record.
+      set -- $parent_line
+      [ "$#" -eq 2 ] || continue
+      possible_parent=$2
+      transition_matches=true
+      while IFS="$tab" read -r record group path base_blob corchess_blob expected; do
+        [ "$record" = P ] || continue
+        if git -C "$root" cat-file -e "$possible_parent:$path" 2>/dev/null; then
+          parent_blob=$(git -C "$root" rev-parse "$possible_parent:$path")
+        else
+          parent_blob=0000000000000000000000000000000000000000
+        fi
+        if git -C "$root" cat-file -e "$possible_commit:$path" 2>/dev/null; then
+          commit_blob=$(git -C "$root" rev-parse "$possible_commit:$path")
+        else
+          commit_blob=0000000000000000000000000000000000000000
+        fi
+        if [ "$parent_blob" != "$base_blob" ] || [ "$commit_blob" != "$corchess_blob" ]; then
+          transition_matches=false
+          break
+        fi
+      done <"$parsed"
+      if [ "$transition_matches" = true ]; then
+        actual_transition_paths=$(
+          git -C "$root" diff-tree --no-commit-id --name-only --no-renames -r "$possible_commit" |
+            LC_ALL=C sort
+        )
+        # Preserve the immutable, previously reviewed bootstrap delivery; every
+        # later delivered transition must contain only the declared path set.
+        if [ "$actual_transition_paths" != "$expected_transition_paths" ] &&
+           [ "$possible_commit" != "$reviewed_bootstrap_transition" ]; then
+          fail 'delivered schema-2 transition contains changes outside the reviewed atomic group'
+        fi
+      fi
+      if [ "$transition_matches" = true ] &&
+         git -C "$root" merge-base --is-ancestor "$official_sha" "$possible_parent"; then
+        candidate_parent=$possible_parent
+        integrated_head=true
+        break
+      fi
+    done
+  fi
+  git -C "$root" merge-base --is-ancestor "$official_sha" "$candidate_parent" ||
+    fail "integration branch does not preserve downstream ancestry: $branch"
+  git -C "$candidate_repo" fetch -q --no-tags "$root" "$candidate_parent"
+  git -C "$candidate_repo" switch -q --detach "$candidate_parent"
   while IFS="$tab" read -r record group path base_blob corchess_blob expected; do
     [ "$record" = P ] || continue
     base_mode=$(git -C "$provenance_repo" ls-tree "$official_sha" -- "$path" | cut -f 1 | cut -d ' ' -f 1)
@@ -271,22 +338,43 @@ else
       "$official_sha" "$corchess_sha" -- "$path" >"$patch_file"
     actual=$(sha256sum "$patch_file" | cut -d ' ' -f 1)
     [ "$actual" = "$expected" ] || fail "path patch evidence mismatch: $path"
-    git -C "$candidate_repo" apply --index --binary "$patch_file" ||
+    git -C "$candidate_repo" apply --index --binary --whitespace=nowarn "$patch_file" ||
       fail "reviewed tree delta conflicts and requires human resolution: $path"
   done <"$parsed"
 fi
 expected_tree=$(git -C "$candidate_repo" write-tree)
 
-manifest_digest=$(sha256sum "$deltas" | cut -d ' ' -f 1)
-branch="integrate/$manifest_digest"
+if [ "$manifest_schema" = 2 ] && [ "$integrated_head" = true ]; then
+  while IFS="$tab" read -r record group path base_blob corchess_blob expected; do
+    [ "$record" = P ] || continue
+    current_mode=$(git -C "$root" ls-tree "$original_head" -- "$path" | cut -f 1 | cut -d ' ' -f 1)
+    expected_mode=$(git -C "$provenance_repo" ls-tree "$corchess_sha" -- "$path" | cut -f 1 | cut -d ' ' -f 1)
+    [ "${current_mode:-missing}" = "${expected_mode:-missing}" ] ||
+      fail "downstream engine path mode differs from reviewed integration: $path"
+    if git -C "$root" cat-file -e "$original_head:$path" 2>/dev/null; then
+      current_blob=$(git -C "$root" rev-parse "$original_head:$path")
+    else
+      current_blob=0000000000000000000000000000000000000000
+    fi
+    [ "$current_blob" = "$corchess_blob" ] ||
+      fail "downstream engine path differs from reviewed integration: $path"
+  done <"$parsed"
+  printf '%s\n' 'no changes'
+  exit 0
+fi
+
 if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
   branch_tree=$(git -C "$root" rev-parse "refs/heads/$branch^{tree}")
   [ "$branch_tree" = "$expected_tree" ] || fail "integration branch already exists with different content: $branch"
-  if ! git -C "$root" merge-base --is-ancestor "$candidate_parent" "refs/heads/$branch"; then
-    if [ "$manifest_schema" = 1 ]; then
+  if [ "$manifest_schema" = 1 ]; then
+    git -C "$root" merge-base --is-ancestor "$candidate_parent" "refs/heads/$branch" ||
       fail "integration branch does not preserve official ancestry: $branch"
-    fi
-    fail "integration branch does not preserve downstream ancestry: $branch"
+  else
+    parent_line=$(git -C "$root" rev-list --parents -n 1 "refs/heads/$branch")
+    # shellcheck disable=SC2086 # Intentional splitting of a validated rev-list record.
+    set -- $parent_line
+    [ "$#" -eq 2 ] && [ "$2" = "$candidate_parent" ] ||
+      fail "integration branch does not preserve downstream ancestry: $branch"
   fi
   printf '%s\n' 'no changes'
   exit 0
