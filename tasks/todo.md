@@ -18,13 +18,13 @@
 - [x] Update ancestry expectations and the README's operational guidance.
 - [x] Run complete focused/full verification, bounded builds/runtime checks, repeated candidate bench, and Graphify update without activating a real engine.
 - [x] Commit the engine-source work unit and record the deterministic `3,388,764` bench baseline.
-- [ ] Bind the reviewed bench manifest to the committed engine source and baseline evidence.
+- [x] Bind the reviewed bench manifest to the committed engine source and baseline evidence.
 
 ### Review
 
 - Tooling passed 10/10 suites; perft and reprosearch passed 20/20; instrumentation passed 75/75 tests across 7/7 suites.
 - The fresh local build is `build/Sf-Cor-Dev` (`c723e9e0897c0b8cb8c5f998ed9060adcd1402a2107cb51f638aedf68ce97dc3`) and reports the expected Sf-Cor-Dev identity and attribution.
-- Three retained bench runs produced exactly `3,388,764` nodes; `manifests/bench.json` remains unchanged until a committed engine-source SHA exists.
+- Three retained bench runs produced exactly `3,388,764` nodes; `manifests/bench.json` binds that result to engine source `1d33062c` and baseline evidence `50f0fe9c`.
 - `src/search.cpp` and `src/search.h` remain byte-identical to their selected CorChess blobs. Full `git diff --check` reports only the two known trailing-space lines contained in the exact CorChess blob.
 
 ## Candidate State
