@@ -92,6 +92,20 @@ def validate_provenance(value):
     return value
 
 
+def is_valid_published_development(item):
+    if not isinstance(item, dict) or not SAFE_TAG.fullmatch(str(item.get("tag", ""))):
+        return False
+    if item.get("development") is not True or item.get("prerelease") is not True:
+        return False
+    if item.get("draft") is not False or item.get("valid") is not True:
+        return False
+    try:
+        validate_provenance(item.get("provenance"))
+    except SystemExit:
+        return False
+    return True
+
+
 def evidence_provenance(evidence):
     if evidence.get("schema") != 1 or not isinstance(evidence.get("nnue"), dict):
         die("invalid release evidence schema")
@@ -222,7 +236,7 @@ def join(metadata_name, artifacts_name, output_name):
 
 
 def plan_publish(evidence_name, state_name, new_tag, rollback_tag):
-    if not SAFE_TAG.fullmatch(new_tag) or not SAFE_TAG.fullmatch(rollback_tag):
+    if not SAFE_TAG.fullmatch(new_tag) or (rollback_tag and not SAFE_TAG.fullmatch(rollback_tag)):
         die("invalid development release tag")
     evidence = load_object(pathlib.Path(evidence_name), "release evidence")
     provenance = validate_provenance({
@@ -235,14 +249,17 @@ def plan_publish(evidence_name, state_name, new_tag, rollback_tag):
     releases = load_array(pathlib.Path(state_name), "release state")
     if any(item.get("tag") == new_tag for item in releases if isinstance(item, dict)):
         die("new release tag already exists")
-    rollback = next((item for item in releases if isinstance(item, dict) and item.get("tag") == rollback_tag), None)
-    if not rollback or not rollback.get("valid") or not rollback.get("known_good"):
-        die("rollback target is not retained known-good provenance")
-    validate_provenance(rollback.get("provenance"))
-    valid = [item for item in releases if isinstance(item, dict) and item.get("development") and item.get("prerelease") and not item.get("draft") and item.get("valid")]
+    valid = [item for item in releases if is_valid_published_development(item)]
+    if valid:
+        rollback = next((item for item in valid if item["tag"] == rollback_tag), None)
+        if not rollback or rollback.get("known_good") is not True:
+            die("rollback target is not retained published known-good provenance")
+        validate_provenance(rollback.get("provenance"))
+    elif rollback_tag:
+        die("bootstrap release must not name a rollback target")
     valid.sort(key=lambda item: (str(item.get("created_at", "")), str(item.get("tag", ""))), reverse=True)
     retained = [new_tag] + [item["tag"] for item in valid[:4]]
-    if rollback_tag not in retained:
+    if rollback_tag and rollback_tag not in retained:
         retained[-1] = rollback_tag
     retained = list(dict.fromkeys(retained))
     prune = sorted(item["tag"] for item in valid if item["tag"] not in retained)

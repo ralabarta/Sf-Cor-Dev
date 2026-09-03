@@ -12,8 +12,9 @@ on:
         required: true
         type: string
       rollback_target:
-        description: Retained known-good development prerelease tag
-        required: true
+        description: Retained known-good development prerelease tag; leave empty only for the first valid release
+        required: false
+        default: ''
         type: string
       execute_publication:
         description: Create and promote the validated draft
@@ -216,7 +217,7 @@ jobs:
           name: validated-release-bundle
       - run: |
           case "$RELEASE_TAG" in (dev-[A-Za-z0-9._-]*) ;; (*) exit 1;; esac
-          case "$ROLLBACK_TARGET" in (dev-[A-Za-z0-9._-]*) ;; (*) exit 1;; esac
+          case "$ROLLBACK_TARGET" in ('') ;; (dev-[A-Za-z0-9._-]*) ;; (*) exit 1;; esac
           test "$EXECUTE_PUBLICATION" = true
           gh release list --limit 100 --json tagName,publishedAt,isDraft,isPrerelease >release-state.raw.json
           python3 - <<'PY'
