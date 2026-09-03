@@ -17,6 +17,17 @@ expect_fail() {
   fi
 }
 
+file_contains() {
+  needle=$1
+  path=$2
+  while IFS= read -r line; do
+    case $line in
+      *"$needle"*) return 0 ;;
+    esac
+  done <"$path"
+  return 1
+}
+
 script="$workspace_root/scripts/release-evidence.sh"
 workflow="$workspace_root/.github/workflows/prerelease.yml"
 [ -x "$script" ] || fail 'release evidence entry point is absent'
@@ -193,6 +204,68 @@ expect_fail "$script" plan-rollback "$state" dev-20260902
 expect_fail "$script" plan-rollback "$state" dev-missing
 [ "$(sha256sum "$state" | cut -d ' ' -f 1)" = "$state_before" ] || fail 'failed rollback planning mutated release state'
 
+rollback_state="$tmp_dir/rollback-state.json"
+rollback_host="$tmp_dir/hosted/dev-known-good"
+mkdir -p "$rollback_host"
+cp "$tmp_dir/pass/artifacts/"* "$rollback_host/"
+cp "$tmp_dir/pass/output/"* "$rollback_host/"
+python3 - "$tmp_dir/pass/output/release-evidence.json" "$rollback_state" <<'PY'
+import json, sys
+source, output = sys.argv[1:]
+evidence = json.load(open(source, encoding="utf-8"))
+provenance = {
+    "source_sha": evidence["source_sha"],
+    "nnue_filename": evidence["nnue"]["filename"],
+    "nnue_sha256": evidence["nnue"]["sha256"],
+    "gpl_source_url": evidence["gpl_source_url"],
+    "checksums": {item["name"]: item["sha256"] for item in evidence["artifacts"]},
+}
+json.dump([{"tag": "dev-known-good", "created_at": "2026-09-01T00:00:00Z",
+            "development": True, "draft": False, "prerelease": True,
+            "valid": True, "known_good": True, "provenance": provenance}],
+          open(output, "w", encoding="utf-8"), indent=2)
+open(output, "a", encoding="utf-8").write("\n")
+PY
+python3 - "$tmp_dir/bin/gh" <<'PY'
+import pathlib, sys
+pathlib.Path(sys.argv[1]).write_text('''#!/usr/bin/env python3
+import json, os, pathlib, shutil, sys
+args = sys.argv[1:]
+with open(os.environ["GH_INVOCATION_LOG"], "a", encoding="utf-8") as stream:
+    stream.write(" ".join(args) + "\\n")
+if args[:3] == ["release", "view", "dev-known-good"]:
+    print(json.dumps({"isDraft": False, "isPrerelease": True,
+                      "targetCommitish": "0123456789abcdef0123456789abcdef01234567"}))
+elif args[:3] == ["release", "download", "dev-known-good"] and args[3] == "--dir":
+    destination = pathlib.Path(args[4]); destination.mkdir(parents=True, exist_ok=True)
+    for source in (pathlib.Path(os.environ["ROLLBACK_HOST"]) / "dev-known-good").iterdir():
+        shutil.copy2(source, destination / source.name)
+else:
+    raise SystemExit(99)
+''', encoding="utf-8")
+PY
+chmod +x "$tmp_dir/bin/gh"
+ROLLBACK_HOST="$tmp_dir/hosted"
+export ROLLBACK_HOST
+"$script" restore-retained "$rollback_state" dev-known-good "$tmp_dir/restored"
+for asset in "$rollback_host/"*; do
+  cmp -s "$asset" "$tmp_dir/restored/$(basename "$asset")" ||
+    fail "restored retained asset differs: $(basename "$asset")"
+done
+file_contains 'release download dev-known-good' "$GH_INVOCATION_LOG" ||
+  fail 'hosted rollback did not download the retained release'
+file_contains 'release view dev-known-good' "$GH_INVOCATION_LOG" ||
+  fail 'hosted rollback did not verify the retained release state'
+
+printf '%s\n' preserved >"$tmp_dir/failed-restore-sentinel"
+printf '%s\n' tampered >>"$rollback_host/Sf-Cor-Dev-linux-x86-64.tar.gz"
+expect_fail "$script" restore-retained "$rollback_state" dev-known-good "$tmp_dir/failed-restored"
+IFS= read -r failed_restore_sentinel <"$tmp_dir/failed-restore-sentinel"
+[ "$failed_restore_sentinel" = preserved ] ||
+  fail 'failed hosted rollback mutated unrelated state'
+[ ! -e "$tmp_dir/failed-restored" ] ||
+  fail 'failed hosted rollback published an unverified bundle'
+
 python3 - "$workflow" <<'PY'
 import pathlib, re, sys
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
@@ -218,23 +291,34 @@ assert "contents: write" in text and "contents: read" in text
 assert "--draft" in text and "--prerelease" in text
 assert text.index("--draft") < text.index("--draft=false")
 assert "execute_publication" in text
+assert "restore_rollback" in text
+assert "scripts/release-evidence.sh restore-retained" in text
+assert 'if [ "$RESTORE_ROLLBACK" = true ]; then' in text
+assert 'gh release create "$RELEASE_TAG"' in text
+assert '--target "$PUBLISH_SHA"' in text
+assert 'evidence["source_sha"] == os.environ["PUBLISH_SHA"]' in text
 assert "scripts/release-evidence.sh join" in text
 assert "scripts/release-evidence.sh plan-publish" in text
 assert "env gga" not in text
+restore = text.index('scripts/release-evidence.sh restore-retained')
 create = text.index('gh release create "$RELEASE_TAG"')
 download = text.index('gh release download "$RELEASE_TAG"')
 promote = text.index('gh release edit "$RELEASE_TAG" --draft=false --prerelease')
 prune = text.index('"gh", "release", "delete"')
-assert create < download < promote < prune
+assert restore < create < download < promote < prune
 assert "hashlib.sha256" in text
-assert 'evidence["source_sha"] == os.environ["REVIEWED_SHA"]' in text
-assert 'evidence["nnue"]["filename"] == os.environ["EXPECTED_NNUE_FILENAME"]' in text
-assert 'evidence["nnue"]["sha256"] == os.environ["EXPECTED_NNUE_SHA256"]' in text
+assert 'evidence["source_sha"] == os.environ["PUBLISH_SHA"]' in text
+assert 'evidence["nnue"]["filename"] == os.environ["PUBLISH_NNUE_FILENAME"]' in text
+assert 'evidence["nnue"]["sha256"] == os.environ["PUBLISH_NNUE_SHA256"]' in text
 assert 'set(path.name for path in root.iterdir()) == expected_assets' in text
 assert '(root / name).read_bytes() == (pathlib.Path("release-output") / name).read_bytes()' in text
 for block in re.findall(r"run: \|\n((?:\s{8,}.*\n)+)", text):
     assert "${{" not in block
 PY
 
-[ ! -e "$GH_INVOCATION_LOG" ] || fail 'tests invoked GitHub publication commands'
+for mutation in 'release create' 'release edit' 'release delete'; do
+  if file_contains "$mutation" "$GH_INVOCATION_LOG"; then
+    fail "rollback verification mutated hosted releases: $mutation"
+  fi
+done
 printf '%s\n' 'prerelease tests passed'

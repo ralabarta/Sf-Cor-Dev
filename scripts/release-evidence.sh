@@ -6,7 +6,7 @@ fail() {
   exit 1
 }
 
-[ "$#" -ge 1 ] || fail 'usage: release-evidence.sh <join|plan-publish|plan-rollback> ...'
+[ "$#" -ge 1 ] || fail 'usage: release-evidence.sh <join|plan-publish|plan-rollback|restore-retained> ...'
 command=$1
 shift
 
@@ -17,6 +17,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -89,6 +90,55 @@ def validate_provenance(value):
         if not isinstance(name, str) or not name or not SHA256.fullmatch(str(digest)):
             die("invalid provenance checksum")
     return value
+
+
+def evidence_provenance(evidence):
+    if evidence.get("schema") != 1 or not isinstance(evidence.get("nnue"), dict):
+        die("invalid release evidence schema")
+    artifacts = evidence.get("artifacts")
+    if not isinstance(artifacts, list) or len(artifacts) != len(ARTIFACTS):
+        die("release evidence artifacts are incomplete")
+    checksums = {}
+    for item in artifacts:
+        if not isinstance(item, dict) or set(item) != {"name", "platform", "sha256"}:
+            die("invalid release evidence artifact")
+        platform = item["platform"]
+        if platform not in ARTIFACTS or item["name"] != ARTIFACTS[platform] or item["name"] in checksums:
+            die("invalid release evidence artifact identity")
+        checksums[item["name"]] = require_sha256(item["sha256"], "release artifact checksum")
+    return validate_provenance({
+        "source_sha": evidence.get("source_sha"),
+        "nnue_filename": evidence["nnue"].get("filename"),
+        "nnue_sha256": evidence["nnue"].get("sha256"),
+        "gpl_source_url": evidence.get("gpl_source_url"),
+        "checksums": checksums,
+    })
+
+
+def verify_bundle(root):
+    evidence = load_object(root / "release-evidence.json", "release evidence")
+    provenance = evidence_provenance(evidence)
+    evidence_assets = {"checksums.sha256", "release-evidence.json", "release-notes.md"}
+    if any(path.is_symlink() or not path.is_file() for path in root.iterdir()):
+        die("release bundle contains unsafe assets")
+    if {path.name for path in root.iterdir()} != set(provenance["checksums"]) | evidence_assets:
+        die("release bundle assets do not match provenance")
+    parsed = {}
+    try:
+        lines = (root / "checksums.sha256").read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        die(f"invalid release checksums: {error}")
+    for line in lines:
+        fields = line.split("  ", 1)
+        if len(fields) != 2 or fields[1] in parsed:
+            die("invalid release checksum record")
+        parsed[fields[1]] = require_sha256(fields[0], "release checksum")
+    if parsed != provenance["checksums"]:
+        die("release checksums do not match provenance")
+    for name, digest in parsed.items():
+        if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest:
+            die("retained release artifact checksum verification failed")
+    return provenance
 
 
 def join(metadata_name, artifacts_name, output_name):
@@ -218,9 +268,41 @@ def plan_rollback(state_name, target_tag):
     print(json.dumps({"provenance": provenance, "steps": steps, "target_tag": target_tag}, indent=2, sort_keys=True))
 
 
+def restore_retained(state_name, target_tag, output_name):
+    if not SAFE_TAG.fullmatch(target_tag):
+        die("invalid rollback tag")
+    releases = load_array(pathlib.Path(state_name), "release state")
+    target = next((item for item in releases if isinstance(item, dict) and item.get("tag") == target_tag), None)
+    if not target or not target.get("development") or not target.get("valid") or not target.get("known_good") or target.get("draft") or not target.get("prerelease"):
+        die("rollback target is not a retained published known-good prerelease")
+    declared = validate_provenance(target.get("provenance"))
+    output = pathlib.Path(output_name)
+    if output.is_symlink() or output.exists():
+        die("rollback output must be a new safe path")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    stage = pathlib.Path(tempfile.mkdtemp(prefix=".release-rollback.", dir=output.parent))
+    try:
+        subprocess.run(["gh", "release", "download", target_tag, "--dir", str(stage)], check=True)
+        release = json.loads(subprocess.check_output(
+            ["gh", "release", "view", target_tag, "--json", "isDraft,isPrerelease,targetCommitish"],
+            text=True,
+        ))
+        if release != {"isDraft": False, "isPrerelease": True, "targetCommitish": declared["source_sha"]}:
+            die("retained release state does not match provenance")
+        observed = verify_bundle(stage)
+        if observed != declared:
+            die("retained release provenance does not match known-good state")
+        os.replace(stage, output)
+    except (json.JSONDecodeError, OSError, subprocess.CalledProcessError) as error:
+        die(f"hosted rollback retrieval failed: {error}")
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 mode, *arguments = sys.argv[1:]
-expected = {"join": 3, "plan-publish": 4, "plan-rollback": 2}
+expected = {"join": 3, "plan-publish": 4, "plan-rollback": 2, "restore-retained": 3}
 if mode not in expected or len(arguments) != expected[mode]:
     die(f"invalid arguments for {mode}")
-{"join": join, "plan-publish": plan_publish, "plan-rollback": plan_rollback}[mode](*arguments)
+{"join": join, "plan-publish": plan_publish, "plan-rollback": plan_rollback,
+ "restore-retained": restore_retained}[mode](*arguments)
 PY
