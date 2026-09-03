@@ -220,21 +220,12 @@ assert text.index("--draft") < text.index("--draft=false")
 assert "execute_publication" in text
 assert "scripts/release-evidence.sh join" in text
 assert "scripts/release-evidence.sh plan-publish" in text
-assert "env gga run --ci" in text
-assert "models: read" in text
-assert "gentleman-guardian-angel/archive/refs/tags/v2.10.1.tar.gz" in text
-assert "models.github.ai/inference/chat/completions" in text
-assert "text.count(old) != 1" in text
-assert "env gga --version" in text
-assert 'IFS= read -r version' in text
-assert 'test "$version" = "gga v$GGA_VERSION"' in text
-assert "c1dbcee120b83238e1c7ecce4a60f88a66810796ad95a239debc09e8509d0fba" in text
-review = text.index("env gga run --ci")
+assert "env gga" not in text
 create = text.index('gh release create "$RELEASE_TAG"')
 download = text.index('gh release download "$RELEASE_TAG"')
 promote = text.index('gh release edit "$RELEASE_TAG" --draft=false --prerelease')
 prune = text.index('"gh", "release", "delete"')
-assert review < create < download < promote < prune
+assert create < download < promote < prune
 assert "hashlib.sha256" in text
 assert 'evidence["source_sha"] == os.environ["REVIEWED_SHA"]' in text
 assert 'evidence["nnue"]["filename"] == os.environ["EXPECTED_NNUE_FILENAME"]' in text
