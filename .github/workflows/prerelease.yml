@@ -20,6 +20,11 @@ on:
         required: true
         default: false
         type: boolean
+      restore_rollback:
+        description: Reissue the retained known-good rollback target under the new release tag
+        required: true
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -199,6 +204,7 @@ jobs:
       RELEASE_TAG: ${{ inputs.release_tag }}
       ROLLBACK_TARGET: ${{ inputs.rollback_target }}
       EXECUTE_PUBLICATION: ${{ inputs.execute_publication }}
+      RESTORE_ROLLBACK: ${{ inputs.restore_rollback }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -246,8 +252,22 @@ jobs:
                             "known_good": tag == os.environ["ROLLBACK_TARGET"], "provenance": provenance})
           open("release-state.json", "w", encoding="utf-8").write(json.dumps(state, indent=2) + "\n")
           PY
+          PUBLISH_SHA=$REVIEWED_SHA
+          PUBLISH_NNUE_FILENAME=$EXPECTED_NNUE_FILENAME
+          PUBLISH_NNUE_SHA256=$EXPECTED_NNUE_SHA256
+          if [ "$RESTORE_ROLLBACK" = true ]; then
+            scripts/release-evidence.sh restore-retained release-state.json "$ROLLBACK_TARGET" rollback-bundle
+            rm -rf joined/artifacts release-output
+            mkdir -p joined/artifacts release-output
+            cp rollback-bundle/Sf-Cor-Dev-* joined/artifacts/
+            cp rollback-bundle/checksums.sha256 rollback-bundle/release-evidence.json rollback-bundle/release-notes.md release-output/
+            PUBLISH_SHA=$(python3 -c 'import json; print(json.load(open("release-output/release-evidence.json"))["source_sha"])')
+            PUBLISH_NNUE_FILENAME=$(python3 -c 'import json; print(json.load(open("release-output/release-evidence.json"))["nnue"]["filename"])')
+            PUBLISH_NNUE_SHA256=$(python3 -c 'import json; print(json.load(open("release-output/release-evidence.json"))["nnue"]["sha256"])')
+          fi
+          export PUBLISH_SHA PUBLISH_NNUE_FILENAME PUBLISH_NNUE_SHA256
           scripts/release-evidence.sh plan-publish release-output/release-evidence.json release-state.json "$RELEASE_TAG" "$ROLLBACK_TARGET" >release-plan.json
-          gh release create "$RELEASE_TAG" joined/artifacts/* release-output/* --draft --prerelease --target "$REVIEWED_SHA" --notes-file release-output/release-notes.md
+          gh release create "$RELEASE_TAG" joined/artifacts/* release-output/* --draft --prerelease --target "$PUBLISH_SHA" --notes-file release-output/release-notes.md
           rm -rf draft-assets
           mkdir draft-assets
           gh release download "$RELEASE_TAG" --dir draft-assets
@@ -261,10 +281,10 @@ jobs:
           root = pathlib.Path("draft-assets")
           evidence = json.load((root / "release-evidence.json").open(encoding="utf-8"))
           state = json.load(open("draft-state.json", encoding="utf-8"))
-          assert state["isDraft"] and state["targetCommitish"] == os.environ["REVIEWED_SHA"]
-          assert evidence["source_sha"] == os.environ["REVIEWED_SHA"]
-          assert evidence["nnue"]["filename"] == os.environ["EXPECTED_NNUE_FILENAME"]
-          assert evidence["nnue"]["sha256"] == os.environ["EXPECTED_NNUE_SHA256"]
+          assert state["isDraft"] and state["targetCommitish"] == os.environ["PUBLISH_SHA"]
+          assert evidence["source_sha"] == os.environ["PUBLISH_SHA"]
+          assert evidence["nnue"]["filename"] == os.environ["PUBLISH_NNUE_FILENAME"]
+          assert evidence["nnue"]["sha256"] == os.environ["PUBLISH_NNUE_SHA256"]
           expected = {item["name"]: item["sha256"] for item in evidence["artifacts"]}
           evidence_assets = {"checksums.sha256", "release-evidence.json", "release-notes.md"}
           expected_assets = set(expected) | evidence_assets

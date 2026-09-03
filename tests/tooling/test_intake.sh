@@ -72,7 +72,7 @@ printf '%s\n' one two >"$corchess_repo/order.txt"
 git -C "$corchess_repo" commit -q -am 'delta two'
 delta_two=$(git -C "$corchess_repo" rev-parse HEAD)
 mkdir -p "$corchess_repo/src"
-printf '%s\n' search >"$corchess_repo/src/search.cpp"
+printf '%s\n' 'search ' >"$corchess_repo/src/search.cpp"
 printf '%s\n' header >"$corchess_repo/src/search.h"
 git -C "$corchess_repo" add src
 git -C "$corchess_repo" commit -q -m 'atomic search delta'
@@ -403,12 +403,82 @@ schema2_manifest_digest=$(sha256sum "$worktree/manifests/corchess-deltas.json" |
   fail 'schema-2 intake discarded downstream history or created an automatic commit'
 [ "$(sha256sum "$worktree/scripts/intake.sh" | cut -d ' ' -f 1)" = "$schema2_tooling" ] ||
   fail 'schema-2 intake changed downstream tooling'
-[ "$(git -C "$worktree" show :src/search.cpp)" = "$(printf '%s\n' search)" ] ||
+[ "$(git -C "$worktree" show :src/search.cpp)" = "$(printf '%s\n' 'search ')" ] ||
   fail 'schema-2 intake did not apply the reviewed path tree'
 [ "$(git -C "$worktree" show :src/search.h)" = "$(printf '%s\n' header)" ] ||
   fail 'schema-2 intake did not apply the complete atomic group'
 file_contains 'applying group search' "$tmp_dir/schema2.out" ||
   fail 'schema-2 intake did not report the atomic group'
+
+git -C "$worktree" commit -q -m 'accept reviewed schema-2 integration'
+schema2_valid_commit=$(git -C "$worktree" rev-parse HEAD)
+schema2_state() {
+  {
+    git -C "$worktree" rev-parse HEAD
+    git -C "$worktree" for-each-ref --format='%(refname) %(objectname)'
+    git -C "$worktree" status --porcelain=v2 --branch
+    git -C "$worktree" ls-files -s
+    sha256sum "$worktree/manifests/upstreams.json" \
+      "$worktree/manifests/corchess-deltas.json" "$worktree/scripts/intake.sh"
+  } | sha256sum | cut -d ' ' -f 1
+}
+schema2_before=$(schema2_state)
+(
+  cd "$worktree"
+  ./scripts/intake.sh >"$tmp_dir/schema2-unchanged.out"
+)
+printf '%s\n' 'no changes' >"$tmp_dir/schema2-expected-unchanged.out"
+cmp -s "$tmp_dir/schema2-expected-unchanged.out" "$tmp_dir/schema2-unchanged.out" ||
+  fail 'integrated schema-2 rerun did not report exactly no changes'
+[ "$(schema2_state)" = "$schema2_before" ] ||
+  fail 'integrated schema-2 rerun mutated repository or provenance state'
+
+schema2_tree=$(git -C "$worktree" rev-parse "$schema2_valid_commit^{tree}")
+schema2_unrelated=$(printf '%s\n' 'same schema-2 tree without downstream ancestry' |
+  git -C "$worktree" commit-tree "$schema2_tree")
+git -C "$worktree" update-ref "refs/heads/integrate/$schema2_manifest_digest" "$schema2_unrelated" "$schema2_valid_commit"
+schema2_unrelated_before=$(schema2_state)
+expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+file_contains 'integration branch does not preserve downstream ancestry' "$tmp_dir/command.err" ||
+  fail 'same-tree schema-2 branch without downstream ancestry was not rejected'
+[ ! -s "$tmp_dir/command.out" ] ||
+  fail 'unrelated schema-2 history reported no changes'
+[ "$(schema2_state)" = "$schema2_unrelated_before" ] ||
+  fail 'unrelated schema-2 history check mutated repository state'
+git -C "$worktree" update-ref "refs/heads/integrate/$schema2_manifest_digest" "$schema2_valid_commit" "$schema2_unrelated"
+
+git -C "$worktree" switch -q -c delivered-schema2 "$schema2_valid_commit"
+git -C "$worktree" branch -q -D "integrate/$schema2_manifest_digest"
+printf '%s\n' 'post-integration tooling change' >"$worktree/README.md"
+git -C "$worktree" add README.md
+git -C "$worktree" commit -q -m 'continue downstream after reviewed integration'
+delivered_schema2_before=$(schema2_state)
+(
+  cd "$worktree"
+  ./scripts/intake.sh >"$tmp_dir/schema2-delivered-unchanged.out" 2>"$tmp_dir/schema2-delivered-unchanged.err"
+)
+cmp -s "$tmp_dir/schema2-expected-unchanged.out" "$tmp_dir/schema2-delivered-unchanged.out" ||
+  fail 'delivered schema-2 rerun did not report exactly no changes'
+[ ! -s "$tmp_dir/schema2-delivered-unchanged.err" ] ||
+  fail 'delivered schema-2 rerun emitted output beyond exact no changes'
+[ "$(schema2_state)" = "$delivered_schema2_before" ] ||
+  fail 'delivered schema-2 rerun recreated an integration ref or mutated repository state'
+
+# A forged delivered-history commit must not hide unrelated source changes
+# alongside the exact reviewed schema-2 blob transition.
+git -C "$worktree" switch -q -c forged-delivered-schema2 "$schema2_head"
+git -C "$worktree" checkout -q "$schema2_valid_commit" -- src/search.cpp src/search.h
+printf '%s\n' 'unreviewed payload' >"$worktree/src/unreviewed.cpp"
+git -C "$worktree" add src
+git -C "$worktree" commit -q -m 'forge reviewed transition with unrelated source payload'
+forged_schema2_before=$(schema2_state)
+expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+file_contains 'delivered schema-2 transition contains changes outside the reviewed atomic group' "$tmp_dir/command.err" ||
+  fail 'forged schema-2 transition with unrelated source payload was not rejected'
+[ ! -s "$tmp_dir/command.out" ] ||
+  fail 'forged schema-2 transition reported no changes'
+[ "$(schema2_state)" = "$forged_schema2_before" ] ||
+  fail 'forged schema-2 transition check mutated repository state'
 
 # A caller engine path that differs from the official base fails before any
 # branch, index, worktree, or protected downstream state changes.
