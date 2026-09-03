@@ -2,106 +2,164 @@
 
 # Sf-Cor-Dev
 
-**A review-first downstream Stockfish workspace for applying selected CorChess changes to exact official Stockfish revisions.**
+**A review-first workspace for applying selected CorChess changes to exact official Stockfish revisions.**
 
 [![Compatibility evidence](https://github.com/ralabarta/Sf-Cor-Dev/actions/workflows/compatibility.yml/badge.svg?branch=main)](https://github.com/ralabarta/Sf-Cor-Dev/actions/workflows/compatibility.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](Copying.txt)
 
-[Quick start](#quick-start) · [Trust model](#trust-model) · [Upstream sources](#upstream-sources) · [Local updates](#native-local-updates) · [Prereleases](#linux-and-windows-x64-prereleases)
+[Choose your path](#choose-your-path) · [Install and verify](#install-build-and-verify) · [Native updates](#native-local-updates) · [Maintainer checklist](#maintainer-checklist)
 
 </div>
 
-Sf-Cor-Dev is source-bearing infrastructure, not an automatic updater or an independent chess-engine project. It pins immutable upstream commits, accepts only a human-reviewed ordered CorChess delta manifest, validates each candidate, and keeps automation non-authoritative. The engine remains Stockfish-derived software and does not include a graphical chess interface.
+Sf-Cor-Dev is source-bearing integration infrastructure, not an automatic updater or an independent engine. It binds reviewed CorChess deltas, NNUE data, and validation evidence to immutable commits, while leaving selection, approval, merge, activation, and release decisions with people. The resulting engine is Stockfish-derived and uses the UCI protocol; no graphical interface is included.
 
 > [!IMPORTANT]
-> Scheduled monitoring only observes the two declared upstream refs. It never chooses CorChess deltas, edits manifests, creates branches or pull requests, pushes commits, merges changes, or publishes releases.
+> Scheduled monitoring is observational only. It never selects a delta, changes a manifest, creates or merges a pull request, pushes a commit, activates a binary, or publishes a release.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    O[Observe exact upstream refs] --> H[Human reviews candidate deltas]
-    H --> I[Prepare transactional intake branch]
+    O[Observe exact refs] --> S[Human selects deltas]
+    S --> I[Transactional intake]
     I --> V[Build and validate]
-    V --> P[Issue-linked pull request]
-    P --> R[Human review and CI evidence]
-    R --> M[Merge to main]
-    M --> A[Local activation or x64 prerelease]
+    V --> P[Issue-linked PR]
+    P --> M[Protected main]
+    M --> D[Local activation or manual prerelease]
 ```
 
-The workflow deliberately separates **observation**, **selection**, **validation**, and **delivery**. A passing script or GitHub Actions run produces evidence; it does not grant merge or release authority.
+The lifecycle intentionally separates **observation**, **selection**, **verification**, and **delivery**. CI and release workflows are provider-independent and produce evidence; GGA runs on the maintainer or pre-commit side. Human review remains mandatory, and automated evidence does not grant merge or release authority.
 
-## Quick start
+### Public status snapshot
 
-Requirements include Git, POSIX shell tooling, Python 3, GNU Make, a compatible C++ compiler, `curl`, `sha256sum`, and ripgrep (`rg`). The local native build also requires `getconf`.
+Verified against GitHub on 2026-09-02:
+
+| Surface | Current state |
+| --- | --- |
+| Default branch | `main` |
+| Branch protection | Enabled; strict required `compatibility` check, admin enforcement, and one approving review |
+| Compatibility workflow | Latest `main` run passed; the badge above reflects live state |
+| Published releases | None |
+| Historical delivery | [PR #2](https://github.com/ralabarta/Sf-Cor-Dev/pull/2) merged the initial operational delivery tracked by closed issue #1 |
+
+This snapshot can age. Check the linked workflow and the repository's [releases](https://github.com/ralabarta/Sf-Cor-Dev/releases) before making an operational decision.
+
+## Choose your path
+
+| I want to… | Start here |
+| --- | --- |
+| Build and evaluate the engine | [Install, build, and verify](#install-build-and-verify) |
+| Keep a validated native binary on my workstation | [Native local updates](#native-local-updates) |
+| Review or update upstream integration | [Upstream-update runbook](#upstream-update-runbook) |
+| Contribute a focused change | [GitHub delivery workflow](#github-delivery-workflow) |
+| Prepare a development prerelease | [Linux and Windows x64 prereleases](#linux-and-windows-x64-prereleases) |
+| Diagnose a failed operation | [Failure and rollback decisions](#failure-and-rollback-decisions) and [Troubleshooting](#troubleshooting) |
+
+## Install, build, and verify
+
+### Requirements
+
+A Unix-like environment with Git, a POSIX shell, Python 3, GNU Make, a compatible C++ compiler, `curl`, `sha256sum`, `expect`, and ripgrep (`rg`). Native local builds additionally require `getconf`; the complete tooling suite requires Python's `yaml` module.
+
+### Quick installation
 
 ```sh
 git clone https://github.com/ralabarta/Sf-Cor-Dev.git
 cd Sf-Cor-Dev
-
-tests/tooling/run.sh
 scripts/nnue-prefetch.sh manifests/nnue.json
 scripts/build.sh manifests/nnue.json
-scripts/validate.sh local-review-1
 ```
 
-Use a unique validation run ID containing only letters, digits, `.`, `_`, and `-`. Validation requires a clean committed source tree, reserves each source/run identity once, and writes evidence to:
+The default `portable` profile builds `ARCH=x86-64` in an isolated staging directory and writes the executable to `build/stockfish`. Compilation consumes only the checksum-verified NNUE cache; it does not download network data during the build.
 
-```text
-evidence/<source-sha>/<run-id>/
+### First verification
+
+```sh
+printf 'uci\nisready\nquit\n' | build/stockfish
+scripts/validate.sh first-verification
 ```
 
-The default build is portable `x86-64`. It is staged away from `src/`, uses only the checksum-verified cached NNUE during compilation, and publishes the executable as `build/stockfish`.
+The first command should include `uciok` and `readyok`. The second requires a clean, committed source tree and runs the complete compatibility sequence. A run ID may contain letters, digits, `.`, `_`, and `-`, but cannot begin with `.` or contain `..`.
 
-## Trust model
+For the repository-owned tooling contracts:
 
-| Boundary | Enforced behavior |
-| --- | --- |
-| Source identity | Full 40-character commits are pinned in reviewed manifests and checked against exact tracked refs. |
-| CorChess selection | `manifests/corchess-deltas.json` must be explicitly reviewed, ordered, and bound to the pinned official and CorChess commits. Every patch has a declared SHA-256. |
-| Intake | `scripts/intake.sh` reconstructs the complete candidate in temporary repositories, rejects conflicts or invalid ancestry, and publishes only a deterministic `integrate/<manifest-sha256>` branch. |
-| NNUE | The network URL, filename, and SHA-256 are pinned. Builds consume a verified cache object rather than downloading during compilation. |
-| Validation | Provenance, NNUE, build, UCI, bench, perft, reprosearch, and smoke gates run in order. Missing, malformed, oversized, or failed evidence closes the gate. |
-| Automation authority | Compatibility and monitoring workflows are evidence-only. Their records explicitly carry `authority: none` and `merge_authorized: false`. |
-| Activation | A validated binary is copied into an immutable, identity-named user-local version directory before atomic symlink switching. |
-| Release provenance | Linux and Windows artifacts are built from one reviewed SHA on `main` ancestry and one NNUE identity, checksummed, joined, and re-verified before publication. |
-
-Human review remains mandatory. Repository policy—not a script, status badge, or evidence file—decides whether a pull request may merge or a prerelease may publish. This README does not assert that branch protection is currently enabled.
+```sh
+tests/tooling/run.sh
+```
 
 ## Upstream sources
 
-The authoritative source locations and operational refs are fixed by [`manifests/upstreams.json`](manifests/upstreams.json):
+[`manifests/upstreams.json`](manifests/upstreams.json) is authoritative for source identity:
 
-| Source | Repository | Operational ref |
+| Source | Repository | Required ref |
 | --- | --- | --- |
 | Official Stockfish | [`official-stockfish/Stockfish`](https://github.com/official-stockfish/Stockfish) | `refs/heads/master` |
-| CorChess | [`IIvec/Stockfish` — `corchess`](https://github.com/IIvec/Stockfish/tree/corchess) | `refs/heads/corchess` |
+| CorChess | [`IIvec/Stockfish` branch `corchess`](https://github.com/IIvec/Stockfish/tree/corchess) | `refs/heads/corchess` |
 
-The manifest also records the currently reviewed full commit for each source. Do not infer CorChess state from the repository default branch, a moving `HEAD`, a tag, or a release page.
+The manifest records a reviewed 40-character commit for each ref. Never infer CorChess state from the repository's default `HEAD`, a tag, or a release page.
 
-### Observational monitoring
+### Observation versus intake
 
-[`.github/workflows/upstream-intake.yml`](.github/workflows/upstream-intake.yml) runs every 15 minutes and can also be dispatched manually. It executes:
+[Observe exact upstream refs](.github/workflows/upstream-intake.yml) runs every 15 minutes and on manual dispatch with read-only contents permission:
 
 ```sh
 scripts/discover.sh manifests/upstreams.json
 ```
 
-The observer classifies each pinned ref as `unchanged`, `advanced`, `diverged`, or `invalid`. Any drift fails visibly so a maintainer can begin review. The schedule never auto-selects deltas, mutates manifests, pushes, or opens a pull request.
+It classifies each exact ref as `unchanged`, `advanced`, `diverged`, or `invalid`. Anything except `unchanged` fails visibly and requires maintainer review. The workflow does not invoke intake or write repository state.
 
-### Reviewed intake
+### Upstream-update runbook
 
-After a maintainer has reviewed and updated both upstream identities and the ordered delta queue, start intake from a clean, attached branch:
+1. Run discovery and inspect both exact refs.
+2. Review candidate official and CorChess commits; decide which deltas belong in the ordered queue.
+3. Update the pinned commits and [`manifests/corchess-deltas.json`](manifests/corchess-deltas.json), including each patch SHA-256.
+4. From a clean, attached branch, reconstruct the candidate:
 
-```sh
-scripts/intake.sh manifests/upstreams.json manifests/corchess-deltas.json
-```
+   ```sh
+   scripts/intake.sh manifests/upstreams.json manifests/corchess-deltas.json
+   ```
 
-For each selected CorChess commit, intake verifies single-parent shape, ancestry under the pinned CorChess commit, and the exact binary patch checksum. It applies the complete queue away from the caller's worktree first. A conflict requires human resolution; the script does not guess or leave a partial integration branch.
+5. Inspect the deterministic `integrate/<manifest-sha256>` branch. A repeated valid intake may report `no changes`.
+6. Run the tooling suite, NNUE prefetch, portable build, and compatibility validation.
+7. Run the maintainer-side GGA check, then open an issue-linked pull request with provenance, evidence, risks, and rollback details.
 
-An unchanged, already-valid integration branch reports `no changes`.
+Intake verifies that every selected CorChess commit is single-parent, belongs beneath the pinned `refs/heads/corchess` commit, and reproduces the declared binary patch checksum. It assembles the full queue in temporary repositories before publishing a branch; conflicts do not leave a partial integration branch.
+
+## Manifest and provenance model
+
+| File | Human-owned decision | Machine verification |
+| --- | --- | --- |
+| [`manifests/upstreams.json`](manifests/upstreams.json) | Exact official and CorChess commits and refs | Ref identity and relationship to observed commits |
+| [`manifests/corchess-deltas.json`](manifests/corchess-deltas.json) | Ordered accepted CorChess commits | Commit shape, ancestry, order, and patch SHA-256 |
+| [`manifests/nnue.json`](manifests/nnue.json) | Network filename, HTTPS source, and SHA-256 | Safe cache path and content digest before build |
+| [`manifests/bench.json`](manifests/bench.json) | Expected bench nodes and source/baseline commits | Pinned upstream `Bench:` provenance and observed node count |
+
+Validation hashes all four manifests and records them with the committed source SHA in `provenance.json`. Do not change a pinned identity or expected bench value merely to make a failing gate pass; review and explain the upstream cause.
 
 ## Build and validation
+
+### Compatibility gates
+
+```sh
+scripts/nnue-prefetch.sh manifests/nnue.json
+scripts/build.sh --profile portable manifests/nnue.json
+scripts/validate.sh review-20260902
+```
+
+`portable` is the default, so `scripts/build.sh manifests/nnue.json` is equivalent. Validation executes and verifies this fail-closed chain:
+
+```text
+provenance → NNUE → build → UCI → bench → perft → reprosearch → smoke
+```
+
+Evidence is written under `evidence/<source-sha>/<run-id>/`. A successful run contains:
+
+- `provenance.json` with source and manifest identities;
+- ordered `results/*.json` records linked by predecessor SHA-256;
+- bounded `logs/*.log` output for each gate;
+- `summary.json` with `status: pass`, `authority: none`, and `merge_authorized: false`.
+
+On pull requests and pushes to `main`, [Compatibility evidence (non-authoritative)](.github/workflows/compatibility.yml) reproduces the portable sequence on `ubuntu-24.04`. Its artifact is named `compatibility-evidence-<source-sha>-<run-id>-<attempt>` and retained for 14 days. The workflow has read-only contents permission and cannot approve, merge, publish, or change manifests.
 
 ### Tooling tests
 
@@ -109,51 +167,33 @@ An unchanged, already-valid integration branch reports `no changes`.
 tests/tooling/run.sh
 ```
 
-The runner executes every executable suite declared in [`tests/tooling/suites.list`](tests/tooling/suites.list), including intake, ancestry, NNUE, gate, activation, local-update, workflow, and prerelease coverage.
-
-### Portable build and complete gate sequence
-
-```sh
-scripts/nnue-prefetch.sh manifests/nnue.json
-scripts/build.sh --profile portable manifests/nnue.json
-scripts/validate.sh local-review-2
-```
-
-Equivalent short form for the default profile:
-
-```sh
-scripts/build.sh manifests/nnue.json
-```
-
-Validation runs these gates in order:
-
-```text
-provenance → NNUE → build → UCI → bench → perft → reprosearch → smoke
-```
-
-Bench expectations are human-owned in [`manifests/bench.json`](manifests/bench.json) and must retain pinned commit provenance. Automation does not rewrite them.
+The runner executes every executable suite in [`tests/tooling/suites.list`](tests/tooling/suites.list), covering the runner, ancestry, intake, NNUE handling, local updates, gates, activation, prerelease evidence, and workflow contracts.
 
 ## Native local updates
 
-The repository-owned updater is the canonical local command:
+The maintained native updater is [`scripts/update-local.sh`](scripts/update-local.sh):
 
 ```sh
 scripts/update-local.sh
-```
-
-An optional run ID may be supplied:
-
-```sh
+# Or choose the evidence identity:
 scripts/update-local.sh local-20260902
 ```
 
-The updater pins the current committed source and CorChess-manifest identities, verifies the NNUE cache, runs the complete gate sequence using the `local` build profile, checks that source identity did not change, and activates only the validated candidate. The local profile uses `ARCH=native`, `profile-build`, and parallelism reported by `getconf _NPROCESSORS_ONLN`.
+It pins the current committed source and CorChess-manifest SHA-256, clears inherited gate overrides, verifies the NNUE cache, validates one absolute candidate with the `local` profile, confirms that `HEAD` did not move, and activates only that candidate. The local profile uses `ARCH=native`, `profile-build`, and `getconf _NPROCESSORS_ONLN` parallelism.
 
-The current maintainer workstation also has a thin `update-sf-cor-dev.sh` convenience wrapper that only executes the repository script and forwards its arguments. This wrapper is machine-specific and outside the repository; it adds no validation or authority. Always treat `scripts/update-local.sh` as the maintained implementation.
+Activation is unprivileged. State lives at:
 
-### Atomic activation and rollback
+```text
+${XDG_DATA_HOME:-$HOME/.local/share}/sf-cor-dev/
+├── activation.lock
+├── current  -> versions/<source-sha>-<manifest-sha256>/stockfish
+├── previous -> versions/<source-sha>-<manifest-sha256>/stockfish
+└── versions/
+```
 
-Manual activation requires the candidate, committed source SHA, and SHA-256 of the reviewed CorChess delta manifest:
+Version directories and checksums are immutable after installation, and `current` switches atomically. Any workstation convenience wrapper should only delegate to this repository-owned script; it is not part of the trust boundary.
+
+### Manual activation and rollback
 
 ```sh
 source_sha=$(git rev-parse HEAD)
@@ -161,93 +201,152 @@ manifest_sha=$(sha256sum manifests/corchess-deltas.json | cut -d ' ' -f 1)
 scripts/activate.sh "$PWD/build/stockfish" "$source_sha" "$manifest_sha"
 ```
 
-Activation is unprivileged and stored under `${XDG_DATA_HOME:-$HOME/.local/share}/sf-cor-dev/`. Each retained version is immutable and checksum-verified. `current` is switched atomically; a displaced current version becomes `previous`.
-
 ```sh
 scripts/rollback.sh
 ```
 
-Rollback validates both retained versions and atomically swaps `current` and `previous`. If build, validation, or switching fails, the active version is not replaced.
+Rollback verifies both retained versions, then atomically swaps `current` and `previous`. It fails without changing the active binary if either retained version is absent or invalid.
+
+## Failure and rollback decisions
+
+| Observation | Do this | Do not do this |
+| --- | --- | --- |
+| Discovery reports `advanced` | Review new commits and deliberately update manifests | Auto-select every new CorChess commit |
+| Discovery reports `diverged` or `invalid` | Stop and verify the exact ref and pinned ancestry | Infer state from default `HEAD` |
+| Intake reports a conflict | Review the complete queue and revise the manifest or source choice | Resolve blindly or keep a partial branch |
+| A validation gate fails | Read its bounded log and result record; fix the cause, then use a new run ID | Rewrite bench or provenance to force green |
+| Local build or validation fails | Keep the existing `current`; no activation occurred | Copy the failed candidate over the active binary |
+| Activation fails | Inspect permissions, lock state, and retained checksums; `current` remains unchanged | Edit immutable version directories in place |
+| Newly activated engine regresses | Run `scripts/rollback.sh` | Delete `previous` before recovery |
+| Prerelease evidence differs by platform | Stop publication and inspect source, NNUE, artifact names, and digests | Treat Linux evidence as Windows runtime proof |
 
 ## Linux and Windows x64 prereleases
 
-[`.github/workflows/prerelease.yml`](.github/workflows/prerelease.yml) is a manual, draft-first development prerelease workflow. It requires:
+[Draft development prerelease](.github/workflows/prerelease.yml) is a manual, provider-independent workflow. Its inputs are a full reviewed SHA on `main`, a new `dev-*` tag, a retained known-good `dev-*` rollback target, and the `execute_publication` switch, which defaults to `false`.
 
-- a full reviewed commit SHA that is present on `main` ancestry;
-- a `dev-*` prerelease tag;
-- a retained known-good `dev-*` rollback target;
-- an explicit publication switch, disabled by default.
-
-The workflow builds deterministic packages from the same reviewed SHA and NNUE identity:
-
-| Platform | Runner | Artifact |
+| Platform | Runner | Package |
 | --- | --- | --- |
 | Linux x64 | `ubuntu-24.04` | `stockfish-linux-x86-64.tar.gz` |
-| Windows x64 | `windows-2022` with MSYS2 UCRT64 | `stockfish-windows-x86-64.zip` containing `stockfish.exe` |
+| Windows x64 | `windows-2022`, MSYS2 UCRT64 | `stockfish-windows-x86-64.zip` containing `stockfish.exe` |
 
-Platform metadata is joined by `scripts/release-evidence.sh`. Before promotion, the workflow creates a draft, downloads every asset again, checks the source and NNUE identities, verifies the exact asset set and SHA-256 values, and only then removes draft status. Cleanup of older development releases follows the validated release plan while retaining the declared rollback target.
+Both jobs bind the same source SHA and NNUE identity. [`scripts/release-evidence.sh`](scripts/release-evidence.sh) joins their metadata and produces `checksums.sha256`, `release-evidence.json`, and `release-notes.md`; the validated workflow bundle is retained for 7 days.
 
-> [!NOTE]
-> Windows execution requires evidence from the Windows GitHub Actions job. Linux or local shell validation must not be presented as Windows runtime proof. Releases come only from reviewed `main` SHAs; this workflow's existence does not imply that a release has been published.
+When publication is explicitly enabled, the workflow:
+
+1. validates the existing rollback target and retention plan;
+2. creates a draft prerelease from the reviewed `main` SHA;
+3. downloads every draft asset again;
+4. verifies the exact asset set, source and NNUE identities, and all SHA-256 values;
+5. removes draft status only after those checks pass;
+6. prunes only releases named by the validated plan.
+
+No release has been published as of the status snapshot above. Because publication requires an existing retained known-good development release, the current repository can build and join prerelease evidence but cannot complete its first publication through this workflow until maintainers establish that bootstrap rollback target through a separately reviewed process.
+
+Windows runtime evidence must come from the Windows job. A Linux or local shell run is not Windows execution proof.
 
 ## GitHub delivery workflow
 
-The operational delivery tracker is [issue #1: Complete operational Stockfish-CorChess delivery](https://github.com/ralabarta/Sf-Cor-Dev/issues/1). For this project and future changes:
+Permanent entry points are the repository's [issue templates](https://github.com/ralabarta/Sf-Cor-Dev/issues/new/choose) and [pull-request template](.github/PULL_REQUEST_TEMPLATE.md), not a closed operational tracker.
 
-1. **Issue** — describe the goal, acceptance criteria, risks, rollback, and data-safety considerations.
-2. **Branch** — create a focused branch from the intended reviewed base and keep unrelated changes out.
-3. **Pull request** — link the issue and identify the exact source SHA, manifest changes, validation run, and rollback path.
-4. **Review** — inspect the source and human-owned expectations; treat [compatibility evidence](.github/workflows/compatibility.yml) as non-authoritative supporting evidence.
-5. **Merge** — merge only under the repository's current human review and branch policy.
-6. **Delivery** — from the reviewed `main` SHA, explicitly choose local activation or the manual prerelease workflow.
+1. **Issue:** record the outcome, acceptance criteria, risks, rollback, and data-safety considerations.
+2. **Branch:** start from the intended reviewed base and exclude unrelated work.
+3. **Pull request:** link the issue; identify source and manifest changes, evidence, and rollback boundaries.
+4. **Maintainer checks:** run the applicable local tests and `env gga run --no-cache`. GGA is intentionally not embedded in CI or release workflows.
+5. **Protected review:** require the strict `compatibility` check and at least one approval; branch policy applies to administrators.
+6. **Delivery:** after merge, explicitly choose local activation or manual prerelease handling.
 
-Do not equate a green check with approval. The compatibility workflow can run on pull requests and pushes to `main`, uses read-only repository permissions, retains available evidence for 14 days, and cannot merge, approve, publish, alter manifests, or grant authority.
+For changes to Stockfish C++ source, also follow [`CONTRIBUTING.md`](CONTRIBUTING.md), including applicable style and Fishtest requirements.
 
-## Repository layout
+## Security boundaries
+
+- Workflow actions are pinned to immutable commit SHAs; checkout credentials are not persisted.
+- Observation and compatibility jobs have read-only contents permission. Only the conditional prerelease publication job receives contents write permission.
+- Source commits, manifests, patches, NNUE data, evidence records, and release artifacts are bound by Git or SHA-256 identities.
+- Builds use owned manifests and safe cache paths; activation rejects unsafe, mutable, or out-of-root candidates.
+- Logs and evidence are not authority and may contain environment details. Review them before sharing.
+- Never place credentials, private URLs, tokens, personal data, or proprietary source in manifests, issues, logs, or artifacts.
+
+For a reproducible downstream defect, use the [bug report form](https://github.com/ralabarta/Sf-Cor-Dev/issues/new?template=BUG-REPORT.yml) and include sanitized source, manifest, platform, command, gate, and evidence identities. For sensitive vulnerabilities, use GitHub private vulnerability reporting if the repository exposes it; otherwise contact the repository owner privately before public disclosure. Route confirmed upstream engine defects to the appropriate upstream project.
+
+## Troubleshooting
+
+| Symptom | Likely boundary | Check |
+| --- | --- | --- |
+| `repository source provenance is not clean` | Validation input | Commit intended source changes and remove unrelated untracked inputs; generated `build/` and `evidence/` are excluded |
+| NNUE verification fails | Cached network identity | Compare `manifests/nnue.json`, the cache object, and `scripts/nnue-prefetch.sh --verify-only manifests/nnue.json` |
+| Bench gate fails | Source/expectation mismatch | Compare observed nodes with `manifests/bench.json` and its pinned upstream `Bench:` commit before changing anything |
+| `invalid evidence run ID` | Run identity | Use only letters, digits, `.`, `_`, and `-`; avoid a leading `.` and `..` |
+| Activation lock is held | Concurrent local operation | Let the active update or rollback finish; do not remove a live lock |
+| Rollback says a version is missing or invalid | Retention integrity | Inspect `current`, `previous`, and immutable checksums under the local data directory |
+| Prerelease publish job is skipped | Safe default | Set `execute_publication` only after review, GGA, and rollback-target verification |
+| First prerelease cannot validate rollback | Bootstrap limitation | Establish a known-good `dev-*` target through a separately reviewed bootstrap process |
+
+## FAQ
+
+### Is this an automatic CorChess updater?
+
+No. Monitoring reports exact-ref drift; people choose and review every delta and delivery action.
+
+### Is the compatibility badge approval to merge?
+
+No. It reports reproducible evidence from the latest workflow run. Protected-branch policy and human review decide merge.
+
+### Where is the active local engine?
+
+At `${XDG_DATA_HOME:-$HOME/.local/share}/sf-cor-dev/current`. The repository build remains at `build/stockfish` and is not activated automatically except through `scripts/update-local.sh`.
+
+### Can I run it on Windows?
+
+The prerelease workflow builds and verifies a Windows x64 package. The repository-owned native updater targets Unix-like hosts; it is not the Windows update path.
+
+### Does validation prove chess strength or universal compatibility?
+
+No. It proves the configured gates for one committed source identity and environment. Strength testing and broader platform qualification remain separate work.
+
+### Why are there four manifests?
+
+They separate source selection, ordered CorChess deltas, NNUE identity, and bench expectations so each human decision is explicit and independently hashed.
+
+## Repository map
 
 | Path | Purpose |
 | --- | --- |
-| [`src/`](src/) | Stockfish-derived engine source and build system. |
-| [`manifests/`](manifests/) | Reviewed upstream, CorChess delta, NNUE, and bench identities. |
-| [`scripts/`](scripts/) | Discovery, intake, NNUE, build, validation, activation, rollback, and release-evidence tooling. |
-| [`tests/tooling/`](tests/tooling/) | Owned integration and contract tests for the operational toolchain. |
-| [`.github/workflows/`](.github/workflows/) | Non-authoritative compatibility, scheduled observation, and manual prerelease workflows. |
-| [`README.stockfish.md`](README.stockfish.md) | Preserved upstream Stockfish overview, usage, and build guidance. |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Upstream Stockfish contribution and code-style guidance. |
-| [`Copying.txt`](Copying.txt) | GNU General Public License version 3. |
-| `build/` | Generated local build output; not a source of authority. |
-| `evidence/` | Generated validation evidence keyed by source SHA and run ID. |
-
-## Security and reporting
-
-- For reproducible public defects in this downstream workflow, use the repository's [bug report form](https://github.com/ralabarta/Sf-Cor-Dev/issues/new?template=BUG-REPORT.yml). Include the full source SHA, manifest digests, platform, command, failing gate, and sanitized evidence path.
-- Do not post credentials, private URLs, tokens, personal data, proprietary source, or sensitive vulnerability details in an issue or log.
-- For a vulnerability that could put users at risk, use GitHub's private vulnerability-reporting channel if it is available for this repository; otherwise contact the repository owner privately before public disclosure.
-- Report engine behavior or upstream Stockfish defects to the appropriate upstream project after confirming they are not introduced by the downstream integration.
-
-## Contributing
-
-Start with an issue before changing intake, trust boundaries, manifests, validation expectations, activation, or release behavior. Keep commits reviewable, preserve source and patch provenance, add focused tooling tests for operational changes, and run:
-
-```sh
-tests/tooling/run.sh
-env gga
-git diff --check
-```
-
-Changes to Stockfish C++ source should also follow the upstream guidance in [`CONTRIBUTING.md`](CONTRIBUTING.md), including applicable formatting and Fishtest requirements. Never update a bench value solely to make validation pass.
+| [`src/`](src/) | Stockfish-derived engine source and build system |
+| [`manifests/`](manifests/) | Reviewed source, delta, NNUE, and bench identities |
+| [`scripts/`](scripts/) | Discovery, intake, build, validation, activation, rollback, and release tooling |
+| [`tests/tooling/`](tests/tooling/) | Integration and contract tests for the operational toolchain |
+| [`.github/workflows/`](.github/workflows/) | Compatibility evidence, exact-ref observation, and manual prerelease workflows |
+| [`README.stockfish.md`](README.stockfish.md) | Preserved upstream Stockfish overview and usage guidance |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Upstream Stockfish contribution and style guidance |
+| [`Copying.txt`](Copying.txt) | GNU General Public License version 3 |
+| `build/` | Generated local executable; not authoritative source |
+| `evidence/` | Generated validation records keyed by source SHA and run ID |
 
 ## Limitations
 
-- Upstream compatibility is not automatic; divergent refs, conflicting deltas, or changed behavior require human analysis.
-- Scheduled monitoring observes only the exact refs declared in `manifests/upstreams.json`.
-- Validation proves the configured gates for one source and environment; it is not a proof of chess strength, universal platform compatibility, or defect-free software.
-- The native local updater targets Unix-like hosts with the required POSIX/GNU tooling. It is not the Windows validation path.
+- Compatibility and CorChess delta selection require human analysis.
+- Monitoring covers only the two exact refs in `manifests/upstreams.json`.
+- The native updater requires Unix-like POSIX/GNU tooling and builds for the current host.
+- Validation is not proof of chess strength, universal compatibility, or defect-free software.
+- The first prerelease needs a separately reviewed rollback-target bootstrap.
 - Automatic merge, signing, attestations, and autonomous release selection are out of scope.
-- Sf-Cor-Dev includes no GUI. Use a compatible UCI chess interface to run the engine interactively.
+- No GUI, package manager integration, or automatic background installation is included.
+
+## Maintainer checklist
+
+- [ ] Observe `refs/heads/master` and `refs/heads/corchess`; do not use default `HEAD` for CorChess.
+- [ ] Review and pin full upstream commits, ordered delta patch digests, NNUE identity, and bench provenance.
+- [ ] Run `scripts/intake.sh manifests/upstreams.json manifests/corchess-deltas.json` from a clean attached branch.
+- [ ] Run `tests/tooling/run.sh`.
+- [ ] Run NNUE prefetch, portable build, and `scripts/validate.sh <unique-run-id>`.
+- [ ] Run `env gga run --no-cache` outside provider-independent CI/release workflows.
+- [ ] Open an issue-linked PR using the templates; include evidence, risks, and rollback.
+- [ ] Confirm protected `main` requirements before merge.
+- [ ] For local delivery, verify `current` and retain a valid `previous`.
+- [ ] For prerelease delivery, verify the reviewed `main` SHA, rollback target, draft assets, and checksums.
 
 ## License and attribution
 
-Sf-Cor-Dev contains Stockfish-derived source and is distributed under the [GNU General Public License version 3](Copying.txt). When distributing a binary, provide the corresponding complete source—or a durable pointer to the exact source used to build it—and preserve the GPL notices.
+Sf-Cor-Dev contains Stockfish-derived source and is distributed under the [GNU General Public License version 3](Copying.txt). Redistribution must satisfy GPLv3 requirements, including the applicable corresponding-source and notice obligations.
 
 Stockfish is developed by the [Stockfish contributors](https://github.com/official-stockfish/Stockfish). CorChess source is maintained in [`IIvec/Stockfish`](https://github.com/IIvec/Stockfish/tree/corchess). See [`AUTHORS`](AUTHORS) and [`README.stockfish.md`](README.stockfish.md) for upstream authorship, acknowledgements, usage, and project links.
