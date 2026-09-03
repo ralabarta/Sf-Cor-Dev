@@ -166,7 +166,7 @@ print(json.dumps({"authority":"none", "bench_baseline_commit":sys.argv[4], "benc
 PY
 )"
 
-engine=${SF_COR_ENGINE:-$root/build/stockfish}
+engine=${SF_COR_ENGINE:-$root/build/Sf-Cor-Dev}
 max_log_bytes=65536
 bench_max_log_bytes=131072
 previous=null
@@ -219,8 +219,8 @@ validate_output() {
   case $gate in
     provenance) rg -qx "source $source_sha" "$path" ;;
     nnue) rg -qx '[A-Za-z0-9._-]+ [0-9a-f]{64}' "$path" ;;
-    build) rg -q '^built Stockfish offline' "$path" && [ -x "$engine" ] ;;
-    uci) rg -q '^id name Stockfish( |$)' "$path" && rg -qx 'uciok' "$path" ;;
+    build) rg -q '^built Sf-Cor-Dev offline' "$path" && [ -x "$engine" ] ;;
+    uci) rg -q '^id name Sf-Cor-Dev( |$)' "$path" && rg -q '^id author .*Stockfish.*CorChess' "$path" && rg -qx 'uciok' "$path" ;;
     bench) [ "$(rg -o 'Nodes searched  : [0-9]+' "$path" | cut -d ' ' -f 5)" = "$expected_bench" ] ;;
     perft) rg -qx 'Nodes searched: 400' "$path" ;;
     reprosearch) rg -qx 'reprosearch testing OK' "$path" ;;

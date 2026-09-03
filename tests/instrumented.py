@@ -219,7 +219,7 @@ class TestInteractive(metaclass=OrderedClassMembers):
         self.stockfish.clear_output()
 
     def test_startup_output(self):
-        self.stockfish.starts_with("Stockfish")
+        self.stockfish.starts_with("Sf-Cor-Dev")
 
     def test_uci_command(self):
         self.stockfish.send_command("uci")
@@ -453,7 +453,7 @@ class TestSyzygy(metaclass=OrderedClassMembers):
         self.stockfish.clear_output()
 
     def test_syzygy_setup(self):
-        self.stockfish.starts_with("Stockfish")
+        self.stockfish.starts_with("Sf-Cor-Dev")
         self.stockfish.send_command("uci")
         self.stockfish.send_command(
             f"setoption name SyzygyPath value {os.path.join(PATH, 'syzygy')}"

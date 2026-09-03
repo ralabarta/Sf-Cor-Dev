@@ -25,7 +25,7 @@ source_sha=$(git -C "$root" rev-parse HEAD)
 require_commit_sha "$source_sha"
 manifest_sha=$(sha256sum "$manifest" | cut -d ' ' -f 1)
 require_sha256 "$manifest_sha"
-candidate="$root/build/stockfish"
+candidate="$root/build/Sf-Cor-Dev"
 
 unset SF_COR_PROVENANCE_COMMAND SF_COR_NNUE_COMMAND SF_COR_BUILD_COMMAND SF_COR_UCI_COMMAND
 unset SF_COR_BENCH_COMMAND SF_COR_PERFT_COMMAND SF_COR_REPROSEARCH_COMMAND SF_COR_SMOKE_COMMAND
@@ -39,4 +39,4 @@ export SF_COR_BUILD_PROFILE SF_COR_ENGINE SF_COR_BUILD_OUTPUT
 "$script_dir/validate.sh" "$run_id"
 [ "$(git -C "$root" rev-parse HEAD)" = "$source_sha" ] || fail 'source identity changed during local update'
 "$script_dir/activate.sh" "$candidate" "$source_sha" "$manifest_sha"
-printf 'local Stockfish update passed: %s\n' "$run_id"
+printf 'local Sf-Cor-Dev update passed: %s\n' "$run_id"

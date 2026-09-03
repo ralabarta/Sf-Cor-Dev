@@ -73,7 +73,7 @@ case $arch in
   *[!A-Za-z0-9._-]*|'') fail 'invalid build architecture' ;;
 esac
 staging_root="$root/build"
-output=${SF_COR_BUILD_OUTPUT:-"$staging_root/stockfish"}
+output=${SF_COR_BUILD_OUTPUT:-"$staging_root/Sf-Cor-Dev"}
 output=$(
   python3 - "$staging_root" "$output" <<'PY'
 import os
@@ -140,10 +140,10 @@ fi
 binary="$stage/src/stockfish"
 [ -f "$binary" ] && [ ! -L "$binary" ] && [ -x "$binary" ] ||
   fail 'upstream build did not produce an executable regular file'
-output_tmp=$(mktemp "$output_parent/.stockfish.XXXXXX")
+output_tmp=$(mktemp "$output_parent/.Sf-Cor-Dev.XXXXXX")
 cp "$binary" "$output_tmp"
 chmod 0755 "$output_tmp"
 mv "$output_tmp" "$output"
 output_tmp=
 build_success=true
-printf 'built Stockfish offline: %s\n' "$output"
+printf 'built Sf-Cor-Dev offline: %s\n' "$output"

@@ -1,7 +1,27 @@
 {
-  "schema": 1,
+  "schema": 2,
   "reviewed": true,
-  "official_base": "3f6f417b87c0e80ee30914b6b539b4ab7d3b2a5b",
-  "corchess_ref": "e103c1e8b761d680cf3d5a1a4d67012be9de083f",
-  "deltas": []
+  "official_base": "47be34c55fbc86079cba57b9ad6955e6fe0bdff9",
+  "corchess_ref": "a053bea332281575e3c9e144dcfdd67281ffef05",
+  "merge_base": "47be34c55fbc86079cba57b9ad6955e6fe0bdff9",
+  "groups": [
+    {
+      "id": "search",
+      "patch_sha256": "bf813c71d86d1b2a43a9869a806ddff81d190326b31c5477f51ec93bd8984320",
+      "paths": [
+        {
+          "path": "src/search.cpp",
+          "base_blob": "b7e6329ea778597578713948928c5ada25aa030f",
+          "corchess_blob": "eb5e9d2d0ec09f878a05a1fc829b10f67288cb7f",
+          "patch_sha256": "1ece9c7f070562597aaa235f5cc35f3e41449945b6e59d1750cfabf46933ee56"
+        },
+        {
+          "path": "src/search.h",
+          "base_blob": "472e6ebc3816a1d457093ca5498cb19af4b316ab",
+          "corchess_blob": "a78e49b82cb1be83bfe63a63898375b908b46e51",
+          "patch_sha256": "f5828c44a46a9809233584a2f1f6fc2d2c14b268f1c9ed2f9ce3a7180af4fd63"
+        }
+      ]
+    }
+  ]
 }

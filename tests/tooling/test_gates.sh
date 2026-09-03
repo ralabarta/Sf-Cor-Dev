@@ -3,6 +3,7 @@ set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 workspace_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
+perft_source="$workspace_root/tests/perft.sh"
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
@@ -30,6 +31,7 @@ PY
 
 [ -f "$workspace_root/manifests/bench.json" ] || fail 'reviewed bench manifest is absent'
 [ -x "$workspace_root/scripts/validate.sh" ] || fail 'validation entry point is absent'
+[ -x "$perft_source" ] || fail 'perft entry point is absent'
 
 new_workspace() {
   name=$1
@@ -109,13 +111,13 @@ SH
 }
 
 install_gates() {
-  FAKE_ENGINE="$worktree/build/stockfish"
+  FAKE_ENGINE="$worktree/build/Sf-Cor-Dev"
   SF_COR_ENGINE=$FAKE_ENGINE
   export FAKE_ENGINE SF_COR_ENGINE
   install_gate provenance "source $source_sha"
   install_gate nnue 'nn-test.nnue 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-  install_gate build 'built Stockfish offline'
-  install_gate uci 'id name Stockfish dev-test\nid author the Stockfish developers\nuciok'
+  install_gate build 'built Sf-Cor-Dev offline'
+  install_gate uci 'id name Sf-Cor-Dev dev-test\nid author the Stockfish and CorChess developers\nuciok'
   expected_bench=$(python3 - "$worktree/manifests/bench.json" <<'PY'
 import json, sys
 print(json.load(open(sys.argv[1], encoding="utf-8"))["expected_nodes"])
@@ -344,5 +346,23 @@ publication_parent="$worktree/evidence/$source_sha"
 publication_summary=$(fd '^summary\.json$' "$publication_parent" --hidden --type f)
 [ -n "$publication_summary" ] || fail 'failed publication did not retain non-authoritative evidence'
 assert_json "$publication_summary" 'value["status"] == "pass" and value["merge_authorized"] is False and value["authority"] == "none"'
+
+perft_workspace="$tmp_dir/perft-path-resolution"
+perft_bin="$perft_workspace/bin"
+perft_log="$perft_workspace/expect.log"
+mkdir -p "$perft_bin"
+cat >"$perft_bin/expect" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>"$EXPECT_LOG"
+SH
+chmod +x "$perft_bin/expect"
+(
+  cd "$perft_workspace"
+  EXPECT_LOG="$perft_log" PATH="$perft_bin:$PATH" "$perft_source"
+)
+[ "$(wc -l <"$perft_log")" -eq 20 ] || fail 'perft did not invoke Expect through PATH for every position'
+if rg -qv '^-f ' "$perft_log"; then
+  fail 'perft did not preserve Expect file-mode invocation'
+fi
 
 printf '%s\n' 'gate tests passed'

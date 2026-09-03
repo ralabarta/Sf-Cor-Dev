@@ -1,5 +1,6 @@
 tests/tooling/test_runner.sh
 tests/tooling/test_ancestry.sh
+tests/tooling/test_prepare_candidate.sh
 tests/tooling/test_intake.sh
 tests/tooling/test_nnue.sh
 tests/tooling/test_update_local.sh

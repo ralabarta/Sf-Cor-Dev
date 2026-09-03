@@ -71,6 +71,11 @@ delta_one=$(git -C "$corchess_repo" rev-parse HEAD)
 printf '%s\n' one two >"$corchess_repo/order.txt"
 git -C "$corchess_repo" commit -q -am 'delta two'
 delta_two=$(git -C "$corchess_repo" rev-parse HEAD)
+mkdir -p "$corchess_repo/src"
+printf '%s\n' search >"$corchess_repo/src/search.cpp"
+printf '%s\n' header >"$corchess_repo/src/search.h"
+git -C "$corchess_repo" add src
+git -C "$corchess_repo" commit -q -m 'atomic search delta'
 
 git -C "$corchess_repo" switch -q --detach "$official_sha"
 printf '%s\n' legacy >"$corchess_repo/engine.txt"
@@ -91,6 +96,7 @@ git -C "$corchess_repo" commit -q -m 'tip delta'
 git -C "$corchess_repo" merge -q --no-ff aggregate -m 'aggregate merge'
 merge_delta=$(git -C "$corchess_repo" rev-parse HEAD)
 corchess_sha=$(git -C "$corchess_repo" rev-parse corchess)
+tree_delta_sha=$corchess_sha
 git -C "$corchess_repo" switch -q -c default-head "$official_sha"
 [ "$(git -C "$corchess_repo" rev-parse HEAD)" != "$corchess_sha" ] ||
   fail 'CorChess fixture HEAD must differ from refs/heads/corchess'
@@ -127,6 +133,64 @@ write_deltas() {
     done
     printf '\n%s\n' '  ]' '}'
   } >"$destination"
+}
+
+path_patch() {
+  _path_patch_path=$1
+  _path_patch_destination=$2
+  git -C "$corchess_repo" diff --binary --full-index --no-renames \
+    "$official_sha" "$corchess_sha" -- "$_path_patch_path" >"$_path_patch_destination"
+}
+
+write_tree_deltas() {
+  _tree_destination=$1
+  shift
+  entries="$tmp_dir/schema2-entries"
+  : >"$entries"
+  for path in "$@"; do
+    patch="$tmp_dir/schema2-$(printf '%s' "$path" | tr '/.' '__').patch"
+    path_patch "$path" "$patch"
+    if git -C "$corchess_repo" cat-file -e "$official_sha:$path" 2>/dev/null; then
+      base_blob=$(git -C "$corchess_repo" rev-parse "$official_sha:$path")
+    else
+      base_blob=0000000000000000000000000000000000000000
+    fi
+    if git -C "$corchess_repo" cat-file -e "$corchess_sha:$path" 2>/dev/null; then
+      corchess_blob=$(git -C "$corchess_repo" rev-parse "$corchess_sha:$path")
+    else
+      corchess_blob=0000000000000000000000000000000000000000
+    fi
+    patch_digest=$(sha256sum "$patch" | cut -d ' ' -f 1)
+    printf '%s\t%s\t%s\t%s\n' "$path" "$base_blob" "$corchess_blob" "$patch_digest" >>"$entries"
+  done
+  group_digest=$(sha256sum "$entries" | cut -d ' ' -f 1)
+  python3 - "$_tree_destination" "$official_sha" "$corchess_sha" "$group_digest" "$entries" <<'PY'
+import json
+import sys
+
+output, official, corchess, group_digest, entries_path = sys.argv[1:]
+paths = []
+with open(entries_path, encoding="utf-8") as stream:
+    for line in stream:
+        path, base_blob, corchess_blob, patch_sha256 = line.rstrip("\n").split("\t")
+        paths.append({
+            "path": path,
+            "base_blob": base_blob,
+            "corchess_blob": corchess_blob,
+            "patch_sha256": patch_sha256,
+        })
+data = {
+    "schema": 2,
+    "reviewed": True,
+    "official_base": official,
+    "corchess_ref": corchess,
+    "merge_base": official,
+    "groups": [{"id": "search", "patch_sha256": group_digest, "paths": paths}],
+}
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump(data, stream, indent=2)
+    stream.write("\n")
+PY
 }
 
 new_worktree() {
@@ -317,5 +381,135 @@ after_conflict=$(unchanged_state)
   fail 'conflicting intake leaked unresolved paths into the caller'
 [ ! -e "$worktree/.git/CHERRY_PICK_HEAD" ] ||
   fail 'conflicting intake leaked cherry-pick state into the caller'
+
+# Schema 2 applies one complete reviewed tree-delta group on top of the caller's
+# downstream HEAD, preserving all downstream tooling and history.
+corchess_sha=$tree_delta_sha
+new_worktree 'schema 2 downstream'
+write_upstreams "$worktree/manifests/upstreams.json"
+write_tree_deltas "$worktree/manifests/corchess-deltas.json" src/search.cpp src/search.h
+git -C "$worktree" add manifests
+git -C "$worktree" commit -q -m 'review atomic tree delta'
+schema2_head=$(git -C "$worktree" rev-parse HEAD)
+schema2_tooling=$(sha256sum "$worktree/scripts/intake.sh" | cut -d ' ' -f 1)
+schema2_manifest_digest=$(sha256sum "$worktree/manifests/corchess-deltas.json" | cut -d ' ' -f 1)
+(
+  cd "$worktree"
+  ./scripts/intake.sh >"$tmp_dir/schema2.out"
+)
+[ "$(git -C "$worktree" branch --show-current)" = "integrate/$schema2_manifest_digest" ] ||
+  fail 'schema-2 intake did not select the manifest-digest branch'
+[ "$(git -C "$worktree" rev-parse HEAD)" = "$schema2_head" ] ||
+  fail 'schema-2 intake discarded downstream history or created an automatic commit'
+[ "$(sha256sum "$worktree/scripts/intake.sh" | cut -d ' ' -f 1)" = "$schema2_tooling" ] ||
+  fail 'schema-2 intake changed downstream tooling'
+[ "$(git -C "$worktree" show :src/search.cpp)" = "$(printf '%s\n' search)" ] ||
+  fail 'schema-2 intake did not apply the reviewed path tree'
+[ "$(git -C "$worktree" show :src/search.h)" = "$(printf '%s\n' header)" ] ||
+  fail 'schema-2 intake did not apply the complete atomic group'
+file_contains 'applying group search' "$tmp_dir/schema2.out" ||
+  fail 'schema-2 intake did not report the atomic group'
+
+# A caller engine path that differs from the official base fails before any
+# branch, index, worktree, or protected downstream state changes.
+new_worktree 'schema 2 caller mismatch'
+write_upstreams "$worktree/manifests/upstreams.json"
+write_tree_deltas "$worktree/manifests/corchess-deltas.json" src/search.cpp src/search.h
+mkdir -p "$worktree/src"
+printf '%s\n' downstream >"$worktree/src/search.cpp"
+git -C "$worktree" add manifests src/search.cpp
+git -C "$worktree" commit -q -m 'downstream engine conflict'
+mkdir -p "$worktree/evidence" "$worktree/activation" "$worktree/release"
+printf '%s\n' preserved >"$worktree/evidence/state"
+printf '%s\n' preserved >"$worktree/activation/state"
+printf '%s\n' preserved >"$worktree/release/state"
+git -C "$worktree" add evidence activation release
+git -C "$worktree" commit -q -m 'record schema-2 protected state'
+before_schema2_conflict=$(unchanged_state)
+expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+after_schema2_conflict=$(unchanged_state)
+[ "$after_schema2_conflict" = "$before_schema2_conflict" ] ||
+  fail 'schema-2 base mismatch mutated caller state'
+
+# Atomic group metadata binds the complete ordered path set. Removing one path,
+# duplicating/unsorting paths, or using an unsafe spelling must fail closed.
+new_worktree 'schema 2 partial group'
+write_upstreams "$worktree/manifests/upstreams.json"
+write_tree_deltas "$worktree/manifests/corchess-deltas.json" src/search.cpp src/search.h
+python3 - "$worktree/manifests/corchess-deltas.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+data["groups"][0]["paths"].pop()
+open(path, "w", encoding="utf-8").write(json.dumps(data) + "\n")
+PY
+git -C "$worktree" add manifests
+git -C "$worktree" commit -q -m 'truncate atomic group'
+expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+[ "$(git -C "$worktree" branch --show-current)" = master ] ||
+  fail 'partial schema-2 group changed branch'
+
+new_worktree 'schema 2 unsorted paths'
+write_upstreams "$worktree/manifests/upstreams.json"
+write_tree_deltas "$worktree/manifests/corchess-deltas.json" src/search.cpp src/search.h
+python3 - "$worktree/manifests/corchess-deltas.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+data["groups"][0]["paths"].reverse()
+open(path, "w", encoding="utf-8").write(json.dumps(data) + "\n")
+PY
+git -C "$worktree" add manifests
+git -C "$worktree" commit -q -m 'unsort atomic group'
+expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+
+new_worktree 'schema 2 unsafe path'
+write_upstreams "$worktree/manifests/upstreams.json"
+write_tree_deltas "$worktree/manifests/corchess-deltas.json" src/search.cpp
+python3 - "$worktree/manifests/corchess-deltas.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+data["groups"][0]["paths"][0]["path"] = "../search.cpp"
+open(path, "w", encoding="utf-8").write(json.dumps(data) + "\n")
+PY
+git -C "$worktree" add manifests
+git -C "$worktree" commit -q -m 'use unsafe tree path'
+expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+
+for mutation in merge_base corchess_blob patch_sha256 overlap; do
+  new_worktree "schema 2 tamper $mutation"
+  write_upstreams "$worktree/manifests/upstreams.json"
+  write_tree_deltas "$worktree/manifests/corchess-deltas.json" src/search.cpp src/search.h
+  python3 - "$worktree/manifests/corchess-deltas.json" "$mutation" <<'PY'
+import copy
+import hashlib
+import json
+import sys
+
+path, mutation = sys.argv[1:]
+data = json.load(open(path, encoding="utf-8"))
+group = data["groups"][0]
+if mutation == "merge_base":
+    data["merge_base"] = "0" * 40
+elif mutation == "overlap":
+    duplicate = copy.deepcopy(group)
+    duplicate["id"] = "search-copy"
+    data["groups"].append(duplicate)
+else:
+    group["paths"][0][mutation] = "0" * (40 if mutation == "corchess_blob" else 64)
+    records = "".join(
+        f'{entry["path"]}\t{entry["base_blob"]}\t{entry["corchess_blob"]}\t{entry["patch_sha256"]}\n'
+        for entry in group["paths"]
+    )
+    group["patch_sha256"] = hashlib.sha256(records.encode("utf-8")).hexdigest()
+open(path, "w", encoding="utf-8").write(json.dumps(data) + "\n")
+PY
+  git -C "$worktree" add manifests
+  git -C "$worktree" commit -q -m "tamper with $mutation evidence"
+  expect_fail sh -c "cd '$worktree' && ./scripts/intake.sh"
+  [ "$(git -C "$worktree" branch --show-current)" = master ] ||
+    fail "schema-2 $mutation tampering changed branch"
+done
 
 printf '%s\n' 'intake tests passed'

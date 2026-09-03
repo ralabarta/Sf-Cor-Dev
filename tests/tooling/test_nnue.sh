@@ -224,7 +224,7 @@ after_tamper=$(sha256sum "$cache_object" | cut -d ' ' -f 1)
 [ "$(wc -l <"$curl_log")" -eq 1 ] || fail 'tampered cache triggered a download'
 cp "$payload" "$cache_object"
 
-build_output_path="$worktree/build/stockfish"
+build_output_path="$worktree/build/Sf-Cor-Dev"
 mkdir "$worktree/build"
 printf '%s\n' preserved >"$build_output_path"
 output_before=$(sha256sum "$build_output_path" | cut -d ' ' -f 1)
@@ -237,6 +237,7 @@ build_output=$(tr -d '\n' <"$build_output_path")
 [ "$build_output" = 'controlled stockfish binary' ] || fail 'offline build did not publish the staged binary'
 [ "$(wc -l <"$make_log")" -eq 1 ] || fail 'offline build did not invoke the upstream make path exactly once'
 assert_digest "$test_digest" "$cache_object"
+unset SF_COR_BUILD_OUTPUT
 
 EXPECTED_ARCH=native EXPECTED_TARGET=profile-build EXPECTED_JOBS=7 EXPECTED_SUPPORT_SCRIPTS=true \
   export EXPECTED_ARCH EXPECTED_TARGET EXPECTED_JOBS EXPECTED_SUPPORT_SCRIPTS
@@ -244,6 +245,8 @@ EXPECTED_ARCH=native EXPECTED_TARGET=profile-build EXPECTED_JOBS=7 EXPECTED_SUPP
   cd "$worktree"
   ./scripts/build.sh --profile local
 )
+[ ! -e "$worktree/build/stockfish" ] || fail 'local profile published the internal Make target as a public build name'
+[ -x "$worktree/build/Sf-Cor-Dev" ] || fail 'local profile did not publish the Sf-Cor-Dev binary'
 [ "$(wc -l <"$make_log")" -eq 2 ] || fail 'local profile did not invoke make exactly once'
 rg -q 'ARCH=native -j7 profile-build$' "$make_log" ||
   fail 'local profile did not use native profile-build with detected parallelism'
@@ -271,10 +274,10 @@ expect_fail env SF_COR_BUILD_OUTPUT="$tmp_dir/external-output" sh -c "cd '$workt
 assert_digest "$external_before" "$tmp_dir/external-output"
 mkdir "$tmp_dir/external-build"
 ln -s "$tmp_dir/external-build" "$worktree/build/linked"
-expect_fail env SF_COR_BUILD_OUTPUT="$worktree/build/linked/stockfish" sh -c "cd '$worktree' && ./scripts/build.sh"
-[ ! -e "$tmp_dir/external-build/stockfish" ] || fail 'symlinked build output escaped the staging root'
+expect_fail env SF_COR_BUILD_OUTPUT="$worktree/build/linked/Sf-Cor-Dev" sh -c "cd '$worktree' && ./scripts/build.sh"
+[ ! -e "$tmp_dir/external-build/Sf-Cor-Dev" ] || fail 'symlinked build output escaped the staging root'
 printf '%s\n' unsafe >"$worktree/build/not-a-directory"
-expect_fail env SF_COR_BUILD_OUTPUT="$worktree/build/not-a-directory/stockfish" sh -c "cd '$worktree' && ./scripts/build.sh"
+expect_fail env SF_COR_BUILD_OUTPUT="$worktree/build/not-a-directory/Sf-Cor-Dev" sh -c "cd '$worktree' && ./scripts/build.sh"
 [ "$(wc -l <"$make_log")" -eq "$make_count" ] || fail 'rejected output path invoked make'
 assert_digest "$cache_before" "$cache_object"
 assert_digest "$output_before" "$build_output_path"
