@@ -1,0 +1,50 @@
+name: Observe exact upstream refs
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out observer tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Observe immutable upstream identities
+        run: |
+          discovery_status=0
+          scripts/discover.sh manifests/upstreams.json >upstream-observations.jsonl || discovery_status=$?
+          python3 - upstream-observations.jsonl "$discovery_status" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          command_status = int(sys.argv[2])
+          expected = {
+              "official": "refs/heads/master",
+              "corchess": "refs/heads/corchess",
+          }
+          observations = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+          print("## Exact upstream observation")
+          print("| Source | Ref | Pinned | Observed | Status |")
+          print("| --- | --- | --- | --- | --- |")
+          valid = command_status == 0 and len(observations) == len(expected)
+          for item in observations:
+              source = item.get("source")
+              ref = item.get("ref")
+              status = item.get("status")
+              print(f"| {source} | `{ref}` | `{item.get('pinned')}` | `{item.get('observed')}` | **{status}** |")
+              valid = valid and expected.get(source) == ref and status == "unchanged"
+          if not valid:
+              print("\nUpstream drift or invalid identity detected; reviewed intake is required.")
+              raise SystemExit(1)
+          print("\nBoth exact refs remain unchanged.")
+          PY

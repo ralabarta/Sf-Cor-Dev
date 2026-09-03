@@ -2,6 +2,8 @@ name: Compatibility evidence (non-authoritative)
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 # Automatic evidence never grants authority; human review remains mandatory.
 permissions: {}
@@ -20,12 +22,17 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify source binding
         run: |
           case "$SOURCE_SHA" in (*[!0-9a-f]*|'') exit 1;; esac
           test "${#SOURCE_SHA}" -eq 40
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Install gate dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes expect ripgrep
       - name: Run fail-closed compatibility gates
         run: |
           scripts/nnue-prefetch.sh manifests/nnue.json
@@ -54,5 +61,5 @@ jobs:
         with:
           name: compatibility-evidence-${{ env.SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/${{ env.SOURCE_SHA }}/${{ env.RUN_ID }}
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14

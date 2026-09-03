@@ -1,0 +1,179 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+# shellcheck source=lib/guards.sh
+. "$script_dir/lib/guards.sh"
+
+[ "$#" -le 2 ] || fail 'usage: scripts/intake.sh [upstreams.json] [corchess-deltas.json]'
+root=$(resolve_repository_root "$script_dir")
+upstreams=$(require_owned_manifest "$root" "${1:-manifests/upstreams.json}" upstreams.json)
+deltas=$(require_owned_manifest "$root" "${2:-manifests/corchess-deltas.json}" corchess-deltas.json)
+require_command git
+require_command python3
+require_command sha256sum
+require_clean_repository "$root"
+acquire_intake_lock "$root"
+
+parsed=$(mktemp)
+patch_file=$(mktemp)
+provenance_repo=$(mktemp -d)
+candidate_repo=$(mktemp -d)
+# shellcheck disable=SC2154 # acquire_intake_lock defines intake_lock.
+trap 'rm -f "$parsed" "$patch_file"; rm -rf "$provenance_repo" "$candidate_repo"; rmdir "$intake_lock"' EXIT HUP INT TERM
+git -C "$provenance_repo" init -q --bare
+python3 - "$upstreams" "$deltas" >"$parsed" <<'PY'
+import json
+import re
+import sys
+
+
+def load(path):
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+upstreams = load(sys.argv[1])
+queue = load(sys.argv[2])
+if set(upstreams) != {"schema", "official", "corchess"} or upstreams["schema"] != 1:
+    raise SystemExit("invalid upstream manifest schema")
+expected_refs = {"official": "refs/heads/master", "corchess": "refs/heads/corchess"}
+for name in ("official", "corchess"):
+    source = upstreams[name]
+    if set(source) != {"url", "ref", "commit"}:
+        raise SystemExit(f"invalid {name} source entry")
+    if not isinstance(source["url"], str) or not re.match(r"^(https|file)://[^\s]+$", source["url"]):
+        raise SystemExit(f"invalid {name} source URL")
+    if source["ref"] != expected_refs[name]:
+        raise SystemExit(f"invalid {name} tracked ref")
+    if not isinstance(source["commit"], str) or not re.fullmatch(r"[0-9a-f]{40}", source["commit"]):
+        raise SystemExit(f"invalid {name} commit identity")
+if upstreams["official"]["url"] == upstreams["corchess"]["url"]:
+    raise SystemExit("official and CorChess sources must be distinct")
+expected = {"schema", "reviewed", "official_base", "corchess_ref", "deltas"}
+if set(queue) != expected or queue["schema"] != 1 or queue["reviewed"] is not True:
+    raise SystemExit("delta manifest is not an explicitly reviewed queue")
+if queue["official_base"] != upstreams["official"]["commit"]:
+    raise SystemExit("delta queue official base does not match upstream identity")
+if queue["corchess_ref"] != upstreams["corchess"]["commit"]:
+    raise SystemExit("delta queue CorChess ref does not match upstream identity")
+if not isinstance(queue["deltas"], list):
+    raise SystemExit("delta queue must be ordered JSON array")
+for name in ("official", "corchess"):
+    source = upstreams[name]
+    print("U", name, source["url"], source["ref"], source["commit"], sep="\t")
+for entry in queue["deltas"]:
+    if not isinstance(entry, dict) or set(entry) != {"commit", "patch_sha256"}:
+        raise SystemExit("invalid reviewed delta entry")
+    if not isinstance(entry["commit"], str) or not re.fullmatch(r"[0-9a-f]{40}", entry["commit"]):
+        raise SystemExit("invalid delta commit identity")
+    if not isinstance(entry["patch_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["patch_sha256"]):
+        raise SystemExit("invalid delta patch SHA-256")
+    print("D", entry["commit"], entry["patch_sha256"], sep="\t")
+PY
+
+official_url=
+official_ref=
+official_sha=
+corchess_url=
+corchess_ref=
+corchess_sha=
+tab=$(printf '\t')
+while IFS="$tab" read -r record first second third fourth; do
+  [ "$record" = U ] || continue
+  case $first in
+    official) official_url=$second; official_ref=$third; official_sha=$fourth ;;
+    corchess) corchess_url=$second; corchess_ref=$third; corchess_sha=$fourth ;;
+    *) fail "unknown upstream identity: $first" ;;
+  esac
+done <"$parsed"
+require_commit_sha "$official_sha"
+require_commit_sha "$corchess_sha"
+[ "$official_sha" != "$corchess_sha" ] || fail 'official and CorChess commits must be distinct'
+
+fetch_source() {
+  name=$1
+  url=$2
+  ref=$3
+  commit=$4
+  git -C "$provenance_repo" fetch -q --no-tags "$url" "+$ref:refs/upstreams/$name" ||
+    fail "declared source does not provide tracked ref: $ref"
+  observed=$(git -C "$provenance_repo" rev-parse "refs/upstreams/$name")
+  git -C "$provenance_repo" cat-file -e "$commit^{commit}" 2>/dev/null ||
+    fail "declared source does not provide commit: $commit"
+  git -C "$provenance_repo" merge-base --is-ancestor "$commit" "$observed" ||
+    fail "declared commit is outside tracked ref: $commit"
+}
+
+fetch_source official "$official_url" "$official_ref" "$official_sha"
+fetch_source corchess "$corchess_url" "$corchess_ref" "$corchess_sha"
+
+while IFS="$tab" read -r record commit expected; do
+  [ "$record" = D ] || continue
+  require_commit_sha "$commit"
+  require_sha256 "$expected"
+  git -C "$provenance_repo" cat-file -e "$commit^{commit}" 2>/dev/null ||
+    fail "declared source does not provide commit: $commit"
+  git -C "$provenance_repo" merge-base --is-ancestor "$commit" "$corchess_sha" ||
+    fail "reviewed delta is outside the pinned CorChess identity: $commit"
+  parent_line=$(git -C "$provenance_repo" rev-list --parents -n 1 "$commit")
+  # shellcheck disable=SC2086 # Intentional splitting of a validated rev-list record.
+  set -- $parent_line
+  [ "$#" -eq 2 ] || fail "aggregate or root commit is not an admissible delta: $commit"
+  git -C "$provenance_repo" diff-tree --root --binary --full-index --no-renames \
+    --no-commit-id -p "$commit" >"$patch_file"
+  actual=$(sha256sum "$patch_file" | cut -d ' ' -f 1)
+  [ "$actual" = "$expected" ] || fail "patch evidence mismatch: $commit"
+done <"$parsed"
+
+# Construct and validate the complete candidate away from the caller's repository.
+git -C "$candidate_repo" init -q
+git -C "$candidate_repo" fetch -q --no-tags "$provenance_repo" "$official_sha" "$corchess_sha"
+git -C "$candidate_repo" switch -q --detach "$official_sha"
+while IFS="$tab" read -r record commit expected; do
+  [ "$record" = D ] || continue
+  git -C "$candidate_repo" cherry-pick --no-commit "$commit" ||
+    fail "reviewed delta conflicts and requires human resolution: $commit"
+done <"$parsed"
+expected_tree=$(git -C "$candidate_repo" write-tree)
+
+manifest_digest=$(sha256sum "$deltas" | cut -d ' ' -f 1)
+branch="integrate/$manifest_digest"
+if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
+  branch_tree=$(git -C "$root" rev-parse "refs/heads/$branch^{tree}")
+  [ "$branch_tree" = "$expected_tree" ] || fail "integration branch already exists with different content: $branch"
+  git -C "$root" merge-base --is-ancestor "$official_sha" "refs/heads/$branch" ||
+    fail "integration branch does not preserve official ancestry: $branch"
+  printf '%s\n' 'no changes'
+  exit 0
+fi
+
+# Import candidate objects without updating FETCH_HEAD or any caller ref.
+candidate_commit=$(printf '%s\n' 'reviewed integration candidate' |
+  GIT_AUTHOR_NAME='Sf-Cor-Dev Intake' GIT_AUTHOR_EMAIL='intake@example.invalid' \
+  GIT_COMMITTER_NAME='Sf-Cor-Dev Intake' GIT_COMMITTER_EMAIL='intake@example.invalid' \
+  git -C "$candidate_repo" commit-tree "$expected_tree" -p "$official_sha")
+git -C "$root" fetch -q --no-tags --no-write-fetch-head "$candidate_repo" "$candidate_commit"
+
+original_head=$(git -C "$root" rev-parse HEAD)
+original_branch=$(git -C "$root" symbolic-ref --quiet --short HEAD) || fail 'intake requires an attached caller branch'
+publish_complete=false
+rollback_publish() {
+  [ "$publish_complete" = false ] || return 0
+  git -C "$root" reset -q --hard "$original_head" >/dev/null 2>&1 || true
+  git -C "$root" switch -q "$original_branch" >/dev/null 2>&1 || true
+  git -C "$root" update-ref -d "refs/heads/$branch" >/dev/null 2>&1 || true
+}
+# shellcheck disable=SC2154 # acquire_intake_lock defines intake_lock.
+trap 'rollback_publish; rm -f "$parsed" "$patch_file"; rm -rf "$provenance_repo" "$candidate_repo"; rmdir "$intake_lock"' EXIT HUP INT TERM
+
+git -C "$root" update-ref "refs/heads/$branch" "$official_sha" "0000000000000000000000000000000000000000"
+git -C "$root" switch -q "$branch"
+git -C "$root" read-tree --reset -u "$expected_tree"
+publish_complete=true
+while IFS="$tab" read -r record commit expected; do
+  [ "$record" = D ] || continue
+  printf 'applying %s\n' "$commit"
+done <"$parsed"
+printf 'prepared %s from official %s and CorChess %s\n' \
+  "$branch" "$official_sha" "$corchess_sha"

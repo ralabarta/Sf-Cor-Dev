@@ -35,6 +35,7 @@ Select exactly one.
 | Command | Result |
 | --- | --- |
 | `command` | Pass/fail with relevant output summary |
+| `env gga` | Required: PASS |
 
 ## Runtime evidence
 
