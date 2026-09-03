@@ -147,6 +147,26 @@ make_fixture "$tmp_dir/duplicate"
 mutate_json "$tmp_dir/duplicate/metadata/windows-x64.json" 'value["platform"] = "linux-x64"'
 expect_fail run_join "$tmp_dir/duplicate"
 
+bootstrap_state="$tmp_dir/bootstrap-releases.json"
+printf '%s\n' '[]' >"$bootstrap_state"
+bootstrap_before=$(sha256sum "$bootstrap_state" | cut -d ' ' -f 1)
+"$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$bootstrap_state" dev-20260901 '' >"$tmp_dir/bootstrap-plan.json"
+[ "$(sha256sum "$bootstrap_state" | cut -d ' ' -f 1)" = "$bootstrap_before" ] ||
+  fail 'bootstrap publish planning mutated release state'
+python3 - "$tmp_dir/bootstrap-plan.json" <<'PY'
+import json, sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+assert plan["rollback_target"] == ""
+assert plan["retained_tags"] == ["dev-20260901"]
+assert plan["prune_tags"] == []
+assert [step["action"] for step in plan["steps"]] == [
+    "create_draft", "upload_artifacts", "validate_draft_evidence", "publish_prerelease"
+]
+PY
+expect_fail "$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$bootstrap_state" dev-20260901 dev-missing
+[ "$(sha256sum "$bootstrap_state" | cut -d ' ' -f 1)" = "$bootstrap_before" ] ||
+  fail 'failed bootstrap planning mutated release state'
+
 state="$tmp_dir/releases.json"
 python3 - "$state" <<'PY'
 import json, sys
@@ -172,6 +192,9 @@ with open(sys.argv[1], "w", encoding="utf-8") as stream:
     json.dump(releases, stream, indent=2); stream.write("\n")
 PY
 state_before=$(sha256sum "$state" | cut -d ' ' -f 1)
+expect_fail "$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$state" dev-20260901 dev-20260901
+expect_fail "$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$state" dev-20260907 ''
+[ "$(sha256sum "$state" | cut -d ' ' -f 1)" = "$state_before" ] || fail 'empty rollback rejection mutated release state'
 "$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$state" dev-20260907 dev-20260901 >"$tmp_dir/publish-plan.json"
 [ "$(sha256sum "$state" | cut -d ' ' -f 1)" = "$state_before" ] || fail 'publish planning mutated release state'
 python3 - "$tmp_dir/publish-plan.json" <<'PY'
@@ -186,9 +209,37 @@ assert len(plan["retained_tags"]) == 5
 assert plan["prune_tags"] == ["dev-20260902", "dev-20260903"]
 PY
 
+for invalid_target in syntax missing development draft prerelease validity known-good provenance; do
+  invalid_target_state="$tmp_dir/invalid-target-$invalid_target.json"
+  cp "$state" "$invalid_target_state"
+  case $invalid_target in
+    syntax)
+      expect_fail "$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$invalid_target_state" dev-20260907 invalid-tag
+      continue
+      ;;
+    missing)
+      rollback_tag=dev-missing
+      ;;
+    *)
+      rollback_tag=dev-20260901
+      case $invalid_target in
+        development) expression='value[0]["development"] = False' ;;
+        draft) expression='value[0]["draft"] = True' ;;
+        prerelease) expression='value[0]["prerelease"] = False' ;;
+        validity) expression='value[0]["valid"] = False' ;;
+        known-good) expression='value[0]["known_good"] = False' ;;
+        provenance) expression='value[0]["provenance"]["source_sha"] = "invalid"' ;;
+      esac
+      mutate_json "$invalid_target_state" "$expression"
+      ;;
+  esac
+  expect_fail "$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$invalid_target_state" dev-20260907 "$rollback_tag"
+done
+
 invalid_state="$tmp_dir/invalid-releases.json"
 printf '%s\n' '[{"tag":"dev-bad","valid":false}]' >"$invalid_state"
 invalid_before=$(sha256sum "$invalid_state" | cut -d ' ' -f 1)
+"$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$invalid_state" dev-bootstrap '' >"$tmp_dir/invalid-state-bootstrap-plan.json"
 expect_fail "$script" plan-publish "$tmp_dir/pass/output/release-evidence.json" "$invalid_state" dev-20260907 dev-missing
 [ "$(sha256sum "$invalid_state" | cut -d ' ' -f 1)" = "$invalid_before" ] || fail 'failed publish planning mutated release state'
 
@@ -292,6 +343,9 @@ assert "--draft" in text and "--prerelease" in text
 assert text.index("--draft") < text.index("--draft=false")
 assert "execute_publication" in text
 assert "restore_rollback" in text
+rollback_input = text[text.index("      rollback_target:"):text.index("      execute_publication:")]
+assert "required: false" in rollback_input and "default: ''" in rollback_input
+assert 'case "$ROLLBACK_TARGET" in (\'\') ;; (dev-[A-Za-z0-9._-]*) ;; (*) exit 1;; esac' in text
 assert "scripts/release-evidence.sh restore-retained" in text
 assert 'if [ "$RESTORE_ROLLBACK" = true ]; then' in text
 assert 'gh release create "$RELEASE_TAG"' in text
