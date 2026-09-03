@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-pinned_sha=3f6f417b87c0e80ee30914b6b539b4ab7d3b2a5b
+pinned_sha=47be34c55fbc86079cba57b9ad6955e6fe0bdff9
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 workspace_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 
@@ -62,13 +62,31 @@ for executable in tests/perft.sh tests/reprosearch.sh tests/signature.sh; do
 done
 
 git_at_root diff --quiet "$pinned_sha" -- \
-  src \
   Copying.txt \
   tests/.gitattributes \
-  tests/instrumented.py \
-  tests/perft.sh \
   tests/reprosearch.sh \
   tests/signature.sh \
-  tests/testing.py || fail 'canonical official engine or test baseline differs from the pinned commit'
+  tests/testing.py || fail 'canonical official test baseline differs from the pinned commit'
+
+[ "$(sha256sum "$workspace_root/tests/perft.sh" | cut -d ' ' -f 1)" = 67c38ddfb933056d2570ca35861db6689b8dba8da98efd0f8712acc37d505cb0 ] ||
+  fail 'perft test differs from the reviewed PATH-portable baseline'
+
+[ "$(git_at_root diff --numstat "$pinned_sha" -- tests/instrumented.py)" = "$(printf '2\t2\ttests/instrumented.py')" ] ||
+  fail 'instrumented test changes exceed the Sf-Cor-Dev identity adaptation'
+[ "$(rg -c 'starts_with\("Sf-Cor-Dev"\)' "$workspace_root/tests/instrumented.py")" -eq 2 ] ||
+  fail 'instrumented tests do not enforce the Sf-Cor-Dev startup identity'
+
+changed_engine_paths=$(git_at_root diff --name-only "$pinned_sha" -- src)
+expected_engine_paths='src/misc.cpp
+src/search.cpp
+src/search.h'
+[ "$changed_engine_paths" = "$expected_engine_paths" ] ||
+  fail 'downstream engine changes exceed the reviewed search and identity boundary'
+rg -q 'ss << "Sf-Cor-Dev "' "$workspace_root/src/misc.cpp" ||
+  fail 'engine product identity is not Sf-Cor-Dev'
+rg -q 'Stockfish and CorChess developers' "$workspace_root/src/misc.cpp" ||
+  fail 'engine attribution does not preserve Stockfish and CorChess credit'
+! rg -qi 'stronger|strength|CorChess 5' "$workspace_root/src/misc.cpp" ||
+  fail 'engine identity makes an unreviewed strength or CorChess branding claim'
 
 printf '%s\n' 'official ancestry tests passed'

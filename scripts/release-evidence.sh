@@ -24,8 +24,8 @@ GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_TAG = re.compile(r"^dev-[A-Za-z0-9._-]+$")
 ARTIFACTS = {
-    "linux-x64": "stockfish-linux-x86-64.tar.gz",
-    "windows-x64": "stockfish-windows-x86-64.zip",
+    "linux-x64": "Sf-Cor-Dev-linux-x86-64.tar.gz",
+    "windows-x64": "Sf-Cor-Dev-windows-x86-64.zip",
 }
 
 

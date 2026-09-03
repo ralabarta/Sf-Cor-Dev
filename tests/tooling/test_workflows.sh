@@ -126,23 +126,41 @@ observe_steps = observe["steps"]
 assert observe_steps[0]["uses"] == "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
 assert observe_steps[0]["with"] == {"persist-credentials": "false"}
 observe_runs = [step["run"] for step in observe_steps if "run" in step]
-assert len(observe_runs) == 1
-observer = observe_runs[0]
+assert len(observe_runs) == 3
+observer, preparer, visible_failure = observe_runs
 for required in (
     "scripts/discover.sh manifests/upstreams.json",
     '"refs/heads/master"',
     '"refs/heads/corchess"',
-    'status == "unchanged"',
+    'status in {"unchanged", "advanced"}',
     "$GITHUB_STEP_SUMMARY",
-    "raise SystemExit(1)",
 ):
     assert required in upstream_text or required in observer
+for required in (
+    "scripts/prepare-candidate.sh candidate-bundle manifests/upstreams.json",
+    "candidate-upstreams.json",
+    "summary.json",
+    "sha256sum",
+    "$GITHUB_STEP_SUMMARY",
+):
+    assert required in preparer
+assert "raise SystemExit(1)" in visible_failure
+uploads = [step for step in observe_steps if step.get("uses") == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"]
+assert len(uploads) == 1
+assert uploads[0]["with"]["path"] == "candidate-bundle"
+assert uploads[0]["with"]["if-no-files-found"] == "error"
+assert uploads[0]["with"]["retention-days"] == "14"
 for forbidden in (
     "scripts/intake.sh",
     ">manifests/corchess-deltas.json",
     ">manifests/upstreams.json",
     "git push",
     "gh pr",
+    "gh release",
+    "scripts/intake.sh",
+    "scripts/activate.sh",
+    "scripts/update-local.sh",
+    "manifests/bench.json >",
     "contents: write",
     "pull-requests: write",
 ):

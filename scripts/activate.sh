@@ -198,7 +198,7 @@ if [ "$mode" = rollback ]; then
   }
   trap cleanup EXIT HUP INT TERM
   switch_links "$previous_target" "$current_target" "$previous_target"
-  printf 'rolled back active Stockfish: %s\n' "$data_root/current"
+  printf 'rolled back active Sf-Cor-Dev: %s\n' "$data_root/current"
   exit 0
 fi
 
@@ -267,9 +267,9 @@ fi
 new_target="versions/$identity/stockfish"
 if [ "$current_target" = "$new_target" ]; then
   activation_success=true
-  printf 'active Stockfish already selected: %s\n' "$data_root/current"
+  printf 'active Sf-Cor-Dev already selected: %s\n' "$data_root/current"
   exit 0
 fi
 switch_links "$new_target" "$current_target" "$previous_target"
 activation_success=true
-printf 'activated Stockfish: %s\n' "$data_root/current"
+printf 'activated Sf-Cor-Dev: %s\n' "$data_root/current"

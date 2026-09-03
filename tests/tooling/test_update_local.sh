@@ -54,7 +54,7 @@ for variable in \
 done
 printf '%s\n' validate >>"$UPDATE_LOG"
 [ "${VALIDATE_FAIL:-0}" -eq 0 ] || exit 84
-printf '%s\n' '#!/bin/sh' 'printf "id name Stockfish Test\nuciok\n"' >"$SF_COR_BUILD_OUTPUT"
+printf '%s\n' '#!/bin/sh' 'printf "id name Sf-Cor-Dev Test\nuciok\n"' >"$SF_COR_BUILD_OUTPUT"
 chmod +x "$SF_COR_BUILD_OUTPUT"
 SH
 tee "$worktree/scripts/activate.sh" >/dev/null <<'SH'
@@ -75,7 +75,7 @@ mkdir -p "$worktree/hostile"
 printf '%s\n' '#!/bin/sh' 'exit 97' >"$worktree/hostile/override"
 chmod +x "$worktree/hostile/override"
 export UPDATE_LOG="$update_log" XDG_DATA_HOME="$worktree/data"
-export EXPECTED_CANDIDATE="$worktree/build/stockfish" EXPECTED_SOURCE_SHA="$source_sha"
+export EXPECTED_CANDIDATE="$worktree/build/Sf-Cor-Dev" EXPECTED_SOURCE_SHA="$source_sha"
 export EXPECTED_MANIFEST_SHA="$manifest_sha"
 export SF_COR_ENGINE="$worktree/hostile/engine" SF_COR_BUILD_OUTPUT="$worktree/hostile/output"
 export SF_COR_PROVENANCE_COMMAND="$worktree/hostile/override"

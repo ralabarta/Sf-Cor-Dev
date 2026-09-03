@@ -31,8 +31,8 @@ export GH_INVOCATION_LOG PATH
 make_fixture() {
   root=$1
   mkdir -p "$root/metadata" "$root/artifacts" "$root/output"
-  printf '%s\n' linux-binary >"$root/artifacts/stockfish-linux-x86-64.tar.gz"
-  printf '%s\n' windows-binary >"$root/artifacts/stockfish-windows-x86-64.zip"
+  printf '%s\n' linux-binary >"$root/artifacts/Sf-Cor-Dev-linux-x86-64.tar.gz"
+  printf '%s\n' windows-binary >"$root/artifacts/Sf-Cor-Dev-windows-x86-64.zip"
   python3 - "$root" <<'PY'
 import hashlib, json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
@@ -40,8 +40,8 @@ source = "0123456789abcdef0123456789abcdef01234567"
 network = "nn-1a298aa575a0.nnue"
 network_digest = "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2"
 for platform, artifact in (
-    ("linux-x64", "stockfish-linux-x86-64.tar.gz"),
-    ("windows-x64", "stockfish-windows-x86-64.zip"),
+    ("linux-x64", "Sf-Cor-Dev-linux-x86-64.tar.gz"),
+    ("windows-x64", "Sf-Cor-Dev-windows-x86-64.zip"),
 ):
     path = root / "artifacts" / artifact
     value = {
@@ -94,7 +94,7 @@ assert [item["platform"] for item in evidence["artifacts"]] == ["linux-x64", "wi
 assert evidence["gpl_source_url"].endswith(evidence["source_sha"])
 checksums = (root / "checksums.sha256").read_text(encoding="utf-8").splitlines()
 assert checksums == sorted(checksums)
-assert len(checksums) == 2 and all("  stockfish-" in line for line in checksums)
+assert len(checksums) == 2 and all("  Sf-Cor-Dev-" in line for line in checksums)
 notes = (root / "release-notes.md").read_text(encoding="utf-8")
 for required in (evidence["source_sha"], evidence["nnue"]["filename"], evidence["nnue"]["sha256"], evidence["gpl_source_url"]):
     assert required in notes
@@ -121,11 +121,11 @@ for case_name in source artifact nnue-name nnue-digest missing-checksum missing-
 done
 
 make_fixture "$tmp_dir/missing-artifact"
-rm "$tmp_dir/missing-artifact/artifacts/stockfish-windows-x86-64.zip"
+rm "$tmp_dir/missing-artifact/artifacts/Sf-Cor-Dev-windows-x86-64.zip"
 expect_fail run_join "$tmp_dir/missing-artifact"
 
 make_fixture "$tmp_dir/tamper"
-printf '%s\n' tampered >>"$tmp_dir/tamper/artifacts/stockfish-linux-x86-64.tar.gz"
+printf '%s\n' tampered >>"$tmp_dir/tamper/artifacts/Sf-Cor-Dev-linux-x86-64.tar.gz"
 expect_fail run_join "$tmp_dir/tamper"
 
 make_fixture "$tmp_dir/malformed"
@@ -207,12 +207,12 @@ for pin in (
     assert pin in text
 assert "ARCH=x86-64" in text or "SF_COR_BUILD_ARCH: x86-64" in text
 assert "x86-64-universal" not in text
-assert "stockfish-linux-x86-64.tar.gz" in text
-assert "stockfish-windows-x86-64.zip" in text
+assert "Sf-Cor-Dev-linux-x86-64.tar.gz" in text
+assert "Sf-Cor-Dev-windows-x86-64.zip" in text
 assert "--sort=name" in text and "gzip -n" in text
 assert "ZipInfo" in text and "1980, 1, 1, 0, 0, 0" in text
 assert "src/stockfish.exe" in text
-assert 'archive.writestr(info, pathlib.Path("build/stockfish.exe").read_bytes())' in text
+assert 'archive.writestr(info, pathlib.Path("build/Sf-Cor-Dev.exe").read_bytes())' in text
 assert "permissions: {}" in text
 assert "contents: write" in text and "contents: read" in text
 assert "--draft" in text and "--prerelease" in text

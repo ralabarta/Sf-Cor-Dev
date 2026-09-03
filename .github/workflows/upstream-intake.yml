@@ -42,9 +42,49 @@ jobs:
               ref = item.get("ref")
               status = item.get("status")
               print(f"| {source} | `{ref}` | `{item.get('pinned')}` | `{item.get('observed')}` | **{status}** |")
-              valid = valid and expected.get(source) == ref and status == "unchanged"
+              valid = valid and expected.get(source) == ref and status in {"unchanged", "advanced"}
           if not valid:
-              print("\nUpstream drift or invalid identity detected; reviewed intake is required.")
+              print("\nInvalid or divergent upstream identity detected; no candidate was prepared.")
               raise SystemExit(1)
-          print("\nBoth exact refs remain unchanged.")
+          if any(item["status"] == "advanced" for item in observations):
+              pathlib.Path("forward-drift").write_text("advanced\n", encoding="utf-8")
+              print("\nValid forward drift detected; preparing deterministic unreviewed evidence.")
+          else:
+              print("\nBoth exact refs remain unchanged.")
+          PY
+      - name: Prepare deterministic unreviewed candidate
+        if: ${{ hashFiles('forward-drift') != '' }}
+        run: |
+          scripts/prepare-candidate.sh candidate-bundle manifests/upstreams.json
+          bundle_sha256=$(tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            --mode='u+rwX,go+rX,go-w' -cf - candidate-bundle | sha256sum | cut -d ' ' -f 1)
+          python3 - candidate-bundle/candidate-upstreams.json candidate-bundle/summary.json "$bundle_sha256" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          import sys
+
+          upstreams = json.load(open(sys.argv[1], encoding="utf-8"))
+          summary = json.load(open(sys.argv[2], encoding="utf-8"))
+          print("\n## Unreviewed candidate evidence")
+          print(f"- Official SHA: `{upstreams['official']['commit']}`")
+          print(f"- CorChess SHA: `{upstreams['corchess']['commit']}`")
+          print(f"- Merge-base: `{upstreams['merge_base']}`")
+          print(f"- Candidate artifact digest: `{sys.argv[3]}`")
+          print("- Changed paths:")
+          for path in summary["changed_paths"]:
+              print(f"  - `{path}`")
+          print("\nThis bundle is unreviewed and grants no merge, bench, activation, or release authority.")
+          PY
+      - name: Upload unreviewed candidate evidence
+        if: ${{ hashFiles('forward-drift') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unreviewed-upstream-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate-bundle
+          if-no-files-found: error
+          retention-days: 14
+      - name: Require maintainer review for upstream drift
+        if: ${{ hashFiles('forward-drift') != '' }}
+        run: |
+          python3 - <<'PY'
+          raise SystemExit(1)
           PY
