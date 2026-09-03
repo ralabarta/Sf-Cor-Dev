@@ -21,6 +21,8 @@ manifest=$(require_owned_manifest "$root" "${1:-manifests/nnue.json}" nnue.json)
 require_command sha256sum
 require_command mktemp
 require_command make
+require_command git
+require_command tar
 
 manifest_values=$("$script_dir/nnue-prefetch.sh" --verify-only "$manifest") ||
   fail 'declared NNUE cache object is unavailable'
@@ -35,22 +37,6 @@ require_sha256 "$digest"
 cache_home=${XDG_CACHE_HOME:-${HOME:?HOME is required}/.cache}
 cache_dir=$(require_safe_directory "$cache_home/sf-cor-dev/nnue" existing)
 cache_object="$cache_dir/$digest"
-
-source_filename=$(
-  python3 - "$root/src/evaluate.h" <<'PY'
-import re
-import sys
-try:
-    text = open(sys.argv[1], encoding="utf-8").read()
-except (OSError, UnicodeError):
-    raise SystemExit(1)
-match = re.search(r'^#define EvalFileDefaultName "([^"]+)"$', text, re.M)
-if not match:
-    raise SystemExit(1)
-print(match.group(1))
-PY
-) || fail 'pinned Stockfish network declaration is invalid'
-[ "$source_filename" = "$filename" ] || fail 'manifest network does not match pinned Stockfish source'
 
 [ ! -L "$cache_object" ] || fail 'cached NNUE object must not be a symlink'
 [ -f "$cache_object" ] || fail 'declared NNUE cache object is absent'
@@ -122,12 +108,31 @@ cleanup() {
   fi
 }
 trap cleanup EXIT HUP INT TERM
-cp -R "$root/src" "$stage/src"
+archive="$stage/source.tar"
 if [ "$profile" = local ]; then
-  mkdir "$stage/scripts"
-  cp "$root/scripts/get_native_properties.sh" "$stage/scripts/get_native_properties.sh"
-  cp "$root/scripts/net.sh" "$stage/scripts/net.sh"
+  git -C "$root" archive --format=tar --output="$archive" HEAD -- \
+    src scripts/get_native_properties.sh scripts/net.sh || fail 'cannot archive reviewed build inputs'
+else
+  git -C "$root" archive --format=tar --output="$archive" HEAD -- src ||
+    fail 'cannot archive reviewed build inputs'
 fi
+tar -xf "$archive" -C "$stage" || fail 'cannot stage reviewed build inputs'
+rm -f "$archive"
+source_filename=$(
+  python3 - "$stage/src/evaluate.h" <<'PY'
+import re
+import sys
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except (OSError, UnicodeError):
+    raise SystemExit(1)
+match = re.search(r'^#define EvalFileDefaultName "([^"]+)"$', text, re.M)
+if not match:
+    raise SystemExit(1)
+print(match.group(1))
+PY
+) || fail 'pinned Stockfish network declaration is invalid'
+[ "$source_filename" = "$filename" ] || fail 'manifest network does not match pinned Stockfish source'
 cp "$cache_object" "$stage/src/$filename"
 actual=$(sha256sum "$stage/src/$filename" | cut -d ' ' -f 1)
 [ "$actual" = "$digest" ] || fail 'staged NNUE object failed checksum verification'
