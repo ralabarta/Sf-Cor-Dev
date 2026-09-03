@@ -124,7 +124,7 @@ jobs:
         with:
           msystem: UCRT64
           update: false
-          install: mingw-w64-ucrt-x86_64-gcc make python curl
+          install: mingw-w64-ucrt-x86_64-gcc make python curl git
       - shell: msys2 {0}
         run: |
           scripts/nnue-prefetch.sh manifests/nnue.json
