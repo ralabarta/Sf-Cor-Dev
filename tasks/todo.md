@@ -17,7 +17,8 @@
 - [x] Update public build/release names and read-only forward-drift automation, tests first.
 - [x] Update ancestry expectations and the README's operational guidance.
 - [x] Run complete focused/full verification, bounded builds/runtime checks, repeated candidate bench, and Graphify update without activating a real engine.
-- [ ] Commit the engine-source work unit, then bind the deterministic `3,388,764` bench result to that commit in a separately reviewed manifest update.
+- [x] Commit the engine-source work unit and record the deterministic `3,388,764` bench baseline.
+- [ ] Bind the reviewed bench manifest to the committed engine source and baseline evidence.
 
 ### Review
 
