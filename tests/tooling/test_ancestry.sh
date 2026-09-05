@@ -15,6 +15,13 @@ fail() {
   exit 1
 }
 
+reject_excluded_ancestry() {
+  target=$1
+  target_name=$2
+  ! git_at_root merge-base --is-ancestor "$excluded_sha" "$target" ||
+    fail "excluded Stockfish identity commit is reachable from $target_name"
+}
+
 [ "$(git_at_root cat-file -t "$pinned_sha")" = commit ] ||
   fail 'pinned official object is not a commit'
 [ "$(git_at_root rev-parse "$pinned_sha^{commit}")" = "$pinned_sha" ] ||
@@ -32,6 +39,7 @@ esac
 [ ! -s "$git_dir/info/grafts" ] || fail 'grafts are forbidden for ancestry proof'
 
 ancestry_target=HEAD
+merge_head=
 if merge_head=$(git_at_root rev-parse -q --verify MERGE_HEAD 2>/dev/null); then
   [ "$merge_head" = "$pinned_sha" ] ||
     fail 'pending merge does not use the exact pinned official commit'
@@ -41,8 +49,8 @@ fi
 git_at_root merge-base --is-ancestor "$pinned_sha" "$ancestry_target" ||
   fail 'ancestry target does not preserve the pinned official ancestry'
 if git_at_root cat-file -e "$excluded_sha^{commit}" 2>/dev/null; then
-  ! git_at_root merge-base --is-ancestor "$excluded_sha" "$ancestry_target" ||
-    fail 'excluded Stockfish identity commit is reachable from ancestry target'
+  reject_excluded_ancestry HEAD HEAD
+  [ -z "$merge_head" ] || reject_excluded_ancestry "$merge_head" 'pending MERGE_HEAD'
 fi
 
 for path in src tests Copying.txt; do
