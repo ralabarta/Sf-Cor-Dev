@@ -22,10 +22,12 @@
 
 ### Review
 
-- Tooling passed 10/10 suites; perft and reprosearch passed 20/20; instrumentation passed 75/75 tests across 7/7 suites.
-- The fresh local build is `build/Sf-Cor-Dev` (`c723e9e0897c0b8cb8c5f998ed9060adcd1402a2107cb51f638aedf68ce97dc3`) and reports the expected Sf-Cor-Dev identity and attribution.
-- Three retained bench runs produced exactly `3,388,764` nodes; `manifests/bench.json` binds that result to engine source `1d33062c` and baseline evidence `50f0fe9c`.
-- `src/search.cpp` and `src/search.h` remain byte-identical to their selected CorChess blobs. Full `git diff --check` reports only the two known trailing-space lines contained in the exact CorChess blob.
+- Focused ancestry, intake-idempotency, identity, JSON, repeated-bench, and diff-boundary checks passed for the selected candidate.
+- Selected refs are official `1dc0912d86dafb99e96d679a6ac76cbdf1553459` (`refs/heads/master`) and CorChess `74189bff56341333ea1b506d5774a8f8a0f1a03b` (`refs/heads/corchess`), with the official commit as their exact merge-base.
+- Portable `x86-64`/`64bit SSE2` build from source `9f311ef5228a5a0967fd0f681d17e0b1b056ca2b` used g++ 13.3.0 and produced `build/Sf-Cor-Dev` SHA-256 `d509b06beb6525f3fe2331334e2e148667dfac8ff1709babcea7859bb8691e9d`.
+- NNUE `nn-1a298aa575a0.nnue` verified as SHA-256 `1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2` before the offline build.
+- Three complete retained bench runs against that same binary each produced exactly `3,388,764` nodes: `3,388,764`, `3,388,764`, and `3,388,764`.
+- `src/search.cpp` and `src/search.h` remain byte-identical to their selected CorChess blobs; the final base diff excludes their two known upstream trailing-space lines.
 
 ## Candidate State
 

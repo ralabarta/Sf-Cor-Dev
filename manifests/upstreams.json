@@ -3,11 +3,11 @@
   "official": {
     "url": "https://github.com/official-stockfish/Stockfish.git",
     "ref": "refs/heads/master",
-    "commit": "47be34c55fbc86079cba57b9ad6955e6fe0bdff9"
+    "commit": "1dc0912d86dafb99e96d679a6ac76cbdf1553459"
   },
   "corchess": {
     "url": "https://github.com/IIvec/Stockfish.git",
     "ref": "refs/heads/corchess",
-    "commit": "a053bea332281575e3c9e144dcfdd67281ffef05"
+    "commit": "74189bff56341333ea1b506d5774a8f8a0f1a03b"
   }
 }

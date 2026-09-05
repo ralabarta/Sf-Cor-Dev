@@ -97,7 +97,7 @@ tests/tooling/run.sh
 | Official Stockfish | [`official-stockfish/Stockfish`](https://github.com/official-stockfish/Stockfish) | `refs/heads/master` |
 | CorChess | [`IIvec/Stockfish` branch `corchess`](https://github.com/IIvec/Stockfish/tree/corchess) | `refs/heads/corchess` |
 
-The manifest records a reviewed 40-character commit for each ref. The current baseline is official `47be34c55fbc86079cba57b9ad6955e6fe0bdff9` and CorChess `a053bea332281575e3c9e144dcfdd67281ffef05`, with the official commit as their exact merge-base. Never infer CorChess state from the repository's default `HEAD`, a tag, or a release page.
+The manifest records a reviewed 40-character commit for each ref. The current baseline is official `1dc0912d86dafb99e96d679a6ac76cbdf1553459` and CorChess `74189bff56341333ea1b506d5774a8f8a0f1a03b`, with the official commit as their exact merge-base. Never infer CorChess state from the repository's default `HEAD`, a tag, or a release page.
 
 ### Observation versus intake
 
