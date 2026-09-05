@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-pinned_sha=47be34c55fbc86079cba57b9ad6955e6fe0bdff9
+pinned_sha=1dc0912d86dafb99e96d679a6ac76cbdf1553459
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 workspace_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 
