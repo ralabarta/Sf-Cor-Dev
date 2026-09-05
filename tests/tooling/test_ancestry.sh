@@ -2,6 +2,7 @@
 set -eu
 
 pinned_sha=1dc0912d86dafb99e96d679a6ac76cbdf1553459
+excluded_sha=edb0d9db6731067ec50ce619ff372b463bc4dd5d
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 workspace_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 
@@ -30,14 +31,18 @@ case $git_dir in
 esac
 [ ! -s "$git_dir/info/grafts" ] || fail 'grafts are forbidden for ancestry proof'
 
+ancestry_target=HEAD
 if merge_head=$(git_at_root rev-parse -q --verify MERGE_HEAD 2>/dev/null); then
   [ "$merge_head" = "$pinned_sha" ] ||
     fail 'pending merge does not use the exact pinned official commit'
-  git_at_root merge-base --is-ancestor "$pinned_sha" "$merge_head" ||
-    fail 'pending merge does not preserve official ancestry'
-else
-  git_at_root merge-base --is-ancestor "$pinned_sha" HEAD ||
-    fail 'HEAD does not preserve the pinned official ancestry'
+  ancestry_target=$merge_head
+fi
+
+git_at_root merge-base --is-ancestor "$pinned_sha" "$ancestry_target" ||
+  fail 'ancestry target does not preserve the pinned official ancestry'
+if git_at_root cat-file -e "$excluded_sha^{commit}" 2>/dev/null; then
+  ! git_at_root merge-base --is-ancestor "$excluded_sha" "$ancestry_target" ||
+    fail 'excluded Stockfish identity commit is reachable from ancestry target'
 fi
 
 for path in src tests Copying.txt; do
